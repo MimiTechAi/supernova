@@ -17,11 +17,6 @@ classifiers = [
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
 ]
 
-[project.urls]
-Homepage = "https://github.com/mimitechai/liquid-swarm"
-Repository = "https://github.com/mimitechai/liquid-swarm"
-Issues = "https://github.com/mimitechai/liquid-swarm/issues"
-
 dependencies = [
     "langgraph>=0.4",
     "langchain-core>=0.3",
@@ -30,7 +25,13 @@ dependencies = [
     "python-dotenv>=1.0",
     "fastapi>=0.115",
     "uvicorn[standard]>=0.32",
+    "duckduckgo-search>=7.0",
 ]
+
+[project.urls]
+Homepage = "https://github.com/mimitechai/liquid-swarm"
+Repository = "https://github.com/mimitechai/liquid-swarm"
+Issues = "https://github.com/mimitechai/liquid-swarm/issues"
 
 [project.optional-dependencies]
 dev = [

@@ -803,6 +803,12 @@
                     <label>Budget ($)</label>
                     <input type="number" id="costBudget" value="" min="0.01" max="10" step="0.01" placeholder="∞">
                 </div>
+                <div class="control-group" style="align-items: center; justify-content: center; display: flex;">
+                    <label style="display: flex; align-items: center; gap: 0.4rem; cursor: pointer; margin-bottom: 0;">
+                        <input type="checkbox" id="webSearch" checked style="width: auto; margin: 0;">
+                        <span>🌐 Web Search</span>
+                    </label>
+                </div>
                 <button class="btn-ignite" id="igniteBtn" onclick="igniteSwarm()">🚀 IGNITE</button>
                 <button class="btn-clear" id="clearBtn" onclick="clearAll()">Clear</button>
             </div>
@@ -1146,6 +1152,8 @@
             const customPrompt = document.getElementById('customPromptInput').value.trim();
             const budgetVal = document.getElementById('costBudget').value;
             const costBudget = budgetVal ? parseFloat(budgetVal) : null;
+            const webSearchCheckbox = document.getElementById('webSearch');
+            const webSearchEnabled = webSearchCheckbox ? webSearchCheckbox.checked : true;
 
             // Reset UI
             const btn = document.getElementById('igniteBtn');
@@ -1186,6 +1194,7 @@
                     system_prompt: promptPreset,
                     custom_prompt: promptPreset === 'custom' ? customPrompt : '',
                     cost_budget: costBudget,
+                    web_search_enabled: webSearchEnabled,
                 };
 
                 const response = await fetch('/api/ignite', {
@@ -1390,6 +1399,35 @@
                 }
                 metaEl.innerHTML = metaHtml;
                 metaEl.classList.add('visible');
+            }
+
+            // Show sources if any exist
+            if (data.data.sources && data.data.sources.length > 0) {
+                const sourcesEl = document.createElement('div');
+                sourcesEl.className = 'worker-card__sources';
+                sourcesEl.style.marginTop = '0.8rem';
+                sourcesEl.style.paddingTop = '0.8rem';
+                sourcesEl.style.borderTop = '1px solid var(--border)';
+                sourcesEl.style.fontSize = '0.75rem';
+                
+                let sourcesHtml = '<div style="color: var(--text-secondary); margin-bottom: 0.4rem; font-weight: 600;">📑 Sources Used:</div>';
+                sourcesHtml += '<ul style="list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 0.3rem;">';
+                
+                data.data.sources.forEach(src => {
+                    const usedStyle = src.used_by_llm 
+                        ? 'color: var(--accent-bright); font-weight: 500;' 
+                        : 'color: var(--text-muted); text-decoration: line-through;';
+                    const icon = src.used_by_llm ? '✅' : '⏳';
+                        
+                    sourcesHtml += `
+                        <li style="white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">
+                            ${icon} <a href="${src.url}" target="_blank" style="${usedStyle} text-decoration: none;" title="${src.title}">${src.domain || src.title}</a>
+                        </li>
+                    `;
+                });
+                sourcesHtml += '</ul>';
+                sourcesEl.innerHTML = sourcesHtml;
+                card.appendChild(sourcesEl);
             }
 
             // Update counters

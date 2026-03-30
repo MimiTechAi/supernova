@@ -30,6 +30,13 @@ from liquid_swarm.models import TaskInput, TaskResult
 from liquid_swarm.providers import LLMProvider, ProviderConfig, get_provider_config
 from liquid_swarm.synthesis import synthesize_results
 from liquid_swarm.persistence import save_run, list_runs, get_run
+from liquid_swarm.web_search import (
+    SearchEngine,
+    SearchCache,
+    get_search_engine,
+    build_search_context,
+    parse_sources,
+)
 
 app = FastAPI(title="Liquid Swarm — Live UI")
 
@@ -240,8 +247,11 @@ async def _execute_single_task(
     max_tokens: int = 512,
     temperature: float = 0.2,
     cost_budget_remaining: float | None = None,
+    search_engine: SearchEngine | None = None,
+    search_cache: SearchCache | None = None,
+    main_query: str = "",
 ) -> TaskResult:
-    """Execute a single task with semaphore rate limiting."""
+    """Execute a single task with semaphore rate limiting and optional web search."""
     worker_prompt = system_prompt or (
         "You are a precise analyst. Respond with structure "
         "and concrete data. Maximum 4-5 sentences."
@@ -260,12 +270,41 @@ async def _execute_single_task(
     t0 = time.perf_counter()
 
     try:
+        # Phase 1: Web Search (if enabled)
+        search_results_data = []
+        worker_input = task.query
+        
+        if search_engine is not None:
+            # Check cache first
+            cached = search_cache.get(task.query) if search_cache else None
+            if cached is not None:
+                search_results = cached
+            else:
+                search_results = await search_engine.search(task.query)
+                if search_cache:
+                    search_cache.put(task.query, search_results)
+            
+            # Format context
+            context_prompt = build_search_context(search_results)
+            worker_input = f"{context_prompt}\n\nORIGINAL USER QUERY / CONTENT:\n{main_query}\n\nYOUR SPECIFIC SUB-TASK:\n{task.query}"
+            
+            # Save raw sources for UI
+            search_results_data = [
+                {"title": r.title, "url": r.url, "domain": r.source}
+                for r in search_results
+            ]
+        
+        else:
+            # If no search, just supply the original context
+            worker_input = f"ORIGINAL USER QUERY / CONTENT:\n{main_query}\n\nYOUR SPECIFIC SUB-TASK:\n{task.query}"
+
+        # Phase 2: LLM Call
         async with semaphore:
             body = await _llm_call(
                 provider_cfg,
                 messages=[
                     {"role": "system", "content": worker_prompt},
-                    {"role": "user", "content": task.query},
+                    {"role": "user", "content": worker_input},
                 ],
                 max_tokens=max_tokens,
                 temperature=temperature,
@@ -275,8 +314,15 @@ async def _execute_single_task(
         llm_output = body["choices"][0]["message"]["content"]
         usage = body.get("usage", {})
 
-        # Parse confidence if present
+        # Parse confidence and sources
         confidence = _parse_confidence(llm_output)
+        cited_sources = parse_sources(llm_output) if search_engine else []
+        
+        # Mark used sources
+        final_sources = []
+        for src in search_results_data:
+            is_used = any(src["url"] == cited for cited in cited_sources)
+            final_sources.append({**src, "used_by_llm": is_used})
 
         return TaskResult(
             task_id=task.task_id,
@@ -288,6 +334,8 @@ async def _execute_single_task(
                 "completion_tokens": usage.get("completion_tokens", 0),
                 "latency_seconds": round(elapsed, 3),
                 "confidence": confidence,
+                "sources": final_sources,
+                "search_query": task.query if search_engine else None,
             },
             cost_usd=cost_per_call,
         )
@@ -388,6 +436,7 @@ async def ignite_swarm(request: Request):
     system_prompt_id = body.get("system_prompt", "market_analyst")
     custom_prompt = body.get("custom_prompt", "")
     cost_budget = body.get("cost_budget", None)
+    web_search_enabled = body.get("web_search_enabled", True)
 
     # Resolve provider
     provider_cfg = _build_provider_config(model_id, provider_str)
@@ -402,6 +451,9 @@ async def ignite_swarm(request: Request):
 
     cost_per_call = provider_cfg.get_model_cost(provider_cfg.default_model)
     semaphore = asyncio.Semaphore(10)
+    
+    search_engine = get_search_engine() if web_search_enabled else None
+    search_cache = SearchCache() if web_search_enabled else None
 
     async def event_stream():
         t_total = time.perf_counter()
@@ -450,6 +502,9 @@ async def ignite_swarm(request: Request):
             return await _execute_single_task(
                 task, semaphore, provider_cfg, system_prompt,
                 cost_budget_remaining=budget_remaining,
+                search_engine=search_engine,
+                search_cache=search_cache,
+                main_query=main_query,
             )
 
         coros = [run_task(t) for t in tasks]
