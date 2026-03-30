@@ -34,6 +34,7 @@ from liquid_swarm.config import (
 from liquid_swarm.models import TaskInput, TaskResult
 from liquid_swarm.nodes import set_api_semaphore
 from liquid_swarm.synthesis import synthesize_results
+from liquid_swarm.persistence import save_run, list_runs, get_run
 
 app = FastAPI(title="Liquid Swarm — Live UI")
 
@@ -327,13 +328,29 @@ async def ignite_swarm(request: Request):
                 "cost_usd": 0.0,
             })
 
-        # Phase 5: Completion
+        # Phase 5: Completion + Persistence
         elapsed = time.perf_counter() - t_total
+
+        # Auto-save run to history
+        synthesis_text = synthesis if 'synthesis' in dir() else None
+        try:
+            run_id = save_run(
+                query=main_query,
+                results=all_results,
+                total_cost=round(total_cost, 6),
+                total_time=round(elapsed, 2),
+                model=config.model_id,
+                synthesis=synthesis_text,
+            )
+        except Exception:
+            run_id = None
+
         yield _sse_event("complete", {
             "total_time": round(elapsed, 2),
             "total_cost": round(total_cost, 6),
             "total_tasks": len(tasks),
             "success_count": completed,
+            "run_id": run_id,
         })
 
     return StreamingResponse(
@@ -350,6 +367,24 @@ async def ignite_swarm(request: Request):
 def _sse_event(event: str, data: dict) -> str:
     """Format a Server-Sent Event string."""
     return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
+
+
+# ── Persistence API ─────────────────────────────────────────────────────────
+
+@app.get("/api/runs")
+async def api_list_runs():
+    """List all saved swarm runs (newest first)."""
+    return list_runs()
+
+
+@app.get("/api/runs/{run_id}")
+async def api_get_run(run_id: str):
+    """Retrieve a specific run by ID."""
+    run = get_run(run_id)
+    if run is None:
+        from fastapi.responses import JSONResponse
+        return JSONResponse(status_code=404, content={"detail": "Run not found"})
+    return run
 
 
 if __name__ == "__main__":
