@@ -1,7 +1,7 @@
 [project]
-name = "liquid-swarm"
-version = "0.1.0"
-description = "Liquid Swarm Architecture — Massively parallel AI agent orchestration via LangGraph"
+name = "supernova"
+version = "1.0.0"
+description = "Massively parallel, provider-agnostic AI agent orchestration framework."
 requires-python = ">=3.12"
 license = "Apache-2.0"
 authors = [
@@ -29,9 +29,9 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/mimitechai/liquid-swarm"
-Repository = "https://github.com/mimitechai/liquid-swarm"
-Issues = "https://github.com/mimitechai/liquid-swarm/issues"
+Homepage = "https://github.com/mimitechai/supernova"
+Repository = "https://github.com/mimitechai/supernova"
+Issues = "https://github.com/mimitechai/supernova/issues"
 
 [project.optional-dependencies]
 dev = [

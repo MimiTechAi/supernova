@@ -1,151 +1,126 @@
-# Liquid Swarm
+# Supernova 🌌
 
-**Massively parallel AI agent orchestration via LangGraph & NVIDIA NIM.**
+> **Massively parallel, provider-agnostic AI agent orchestration framework.**
 
-> At rest, the system exists as a single code node. Running cost: zero.  
-> When a massive task arrives — like a global market analysis — we ignite a *cognitive supernova*.  
-> Our algorithm slices the problem and spawns hundreds of isolated, hyper-specialized micro-agents in milliseconds.  
-> They swarm out, complete hundreds of sub-tasks in parallel, validate the hard data, and self-destruct immediately after.  
-> The system scales from 1 to 500 workers and back to 1 — in a single breath.
+Supernova (powered by Liquid Swarm architecture) is a high-performance orchestration engine that breaks down complex research, coding, and analysis tasks into dozens of micro-tasks. It spawns specialized AI agents in parallel to solve them, grounds their answers using live web search, and synthesizes the results into a cohesive, highly accurate executive summary.
+
+At rest, Supernova consumes zero resources. When tasks arrive, it ignites a "cognitive supernova," parallelizing workloads and collapsing back to zero when complete.
 
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 [![Python 3.12+](https://img.shields.io/badge/python-3.12+-blue.svg)](https://www.python.org/downloads/)
-[![NVIDIA NIM](https://img.shields.io/badge/NVIDIA-NIM_Powered-76b900.svg)](https://build.nvidia.com/)
+[![Status](https://img.shields.io/badge/Status-Production_Ready-success.svg)]()
 
 ---
 
-## Architecture
+## 🎯 Key Capabilities
 
+*   **🌐 Real-Time Data Grounding (SAG Pipeline):** Built-in DuckDuckGo web search integration. Workers actively retrieve current data from the live internet, preventing AI hallucinations. Citations and domain sources are transparently exposed in the UI.
+*   **🔓 Zero Vendor Lock-in (Provider Agnostic):** Native support for **OpenAI** (GPT-4o), **Anthropic** (Claude), **NVIDIA NIM** (Llama 3, Mixtral), and **Ollama** for 100% local, privacy-first execution.
+*   **🛡️ Enterprise Safety & Budget Guards:** Set hard budget limits before execution. The engine tracks token usage per agent and halts execution automatically if the budget is exhausted, preventing runaway costs.
+*   **📊 Confidence Scoring:** Every worker evaluates the reliability of its own answer (e.g., `[CONFIDENCE: 90%]`). Outputs are color-coded in the UI so human reviewers instantly know where verification is needed.
+*   **⚡ Reactive Live UX:** The entire execution lifecycle is streamed via Server-Sent Events (SSE). Watch the swarm decompose tasks, spin up workers, and stream the final synthesis token-by-token.
+*   **🧠 Dynamic Context Injection:** Workers receive the complete original context (e.g., thousands of lines of code) alongside their specific sub-task, enabling them to perform deep, contextual tasks like Code Reviews and Legal Analysis out-of-the-box.
+
+---
+
+## 🏗️ Architecture
+
+```mermaid
+graph LR
+    A[User Request] --> B(Task Decomposition)
+    B --> C{Parallel Fan-Out}
+    C --> D[Worker 1 + Web Search]
+    C --> E[Worker 2 + Web Search]
+    C --> F[Worker N + Web Search]
+    D --> G(Synthesis Node)
+    E --> G
+    F --> G
+    G --> H[Final Summary]
 ```
-START ──[route_to_workers]──► N × worker_node ──► reduce_node ──► END
-              │                      │                  │
-         Conditional Edge      Parallel Fan-Out     Fan-In Aggregation
-         (N Send objects)      (Semaphore-gated)    (Assassin filtering)
-```
 
-**Key Design Decisions:**
+**Design Highlights:**
+*   **LangGraph Backend:** Uses `Send()` API for true parallel supersteps.
+*   **Rate Limiting:** Asynchronous semaphores prevent API throttling (HTTP 429).
+*   **Fault Isolation:** If one worker times out or fails, the remaining N-1 workers complete successfully. The swarm is self-healing.
+*   **TDD Solidified:** Over 70+ test cases ensuring routing, edge cases BDD scenarios, cost limits, and search APIs behave deterministically.
 
-| Feature | Implementation |
-|---|---|
-| **Fan-Out** | LangGraph `Send()` — one per sub-task, true parallel supersteps |
-| **Rate Limiting** | `asyncio.Semaphore` — prevents HTTP 429 from NVIDIA NIM |
-| **Fault Isolation** | `asyncio.wait_for()` — timeout kills 1 worker, not 49 siblings |
-| **Red Teaming** | Pydantic `field_validator` — rejects impossible values (e.g. market_share > 100%) |
-| **LLM Backend** | NVIDIA NIM (OpenAI-compatible) — Llama 3.1 8B/70B, Nemotron 70B |
-| **Portability** | `execute_task()` has zero LangGraph imports — 1:1 portable to Modal.com |
+---
 
-## Quick Start
+## 🚀 Quick Start
 
-### Prerequisites
+### 1. Prerequisites
+*   Python 3.12+
+*   [uv](https://docs.astral.sh/uv/) (Extremely fast Python package manager)
+*   At least one API key (OpenAI, Anthropic, NVIDIA) OR Ollama running locally.
 
-- Python 3.12+
-- [uv](https://docs.astral.sh/uv/) package manager
-- [NVIDIA NIM API key](https://build.nvidia.com/)
+### 2. Installation
 
-### Installation
-
+Clone the repository and install all dependencies:
 ```bash
-git clone https://github.com/mimitechai/liquid-swarm.git
-cd liquid-swarm
+git clone https://github.com/mimitechai/supernova.git
+cd supernova
 uv sync --all-extras
 ```
 
-### Configuration
+### 3. Configuration
 
-Create a `.env` file in the project root:
+Create a `.env` file in the root directory. Configure your preferred providers:
 
-```bash
+```env
+# Choose your default provider: openai, anthropic, nvidia, or ollama
+LLM_PROVIDER=openai
+
+# API Keys (Only the one for your active provider is required)
+OPENAI_API_KEY=sk-your-key-here
+ANTHROPIC_API_KEY=sk-ant-your-key-here
 NVIDIA_API_KEY=nvapi-your-key-here
+
+# Optional: Set a hard budget limit per run (in USD)
+COST_BUDGET_PER_RUN=0.50
+
+# Optional: For advanced Search APIs (Defaults to free DuckDuckGo if omitted)
+TAVILY_API_KEY=tvly-your-key-here
 ```
 
-### Run the Web UI
+### 4. Ignite the Swarm
 
+Start the ASGI web server:
 ```bash
 uv run python -m web.app
 ```
+Navigate to **http://localhost:8000** in your browser to access the Supernova command center.
 
-Open [http://localhost:8000](http://localhost:8000) in your browser.
+---
 
-### Run Tests
+## 🧪 Testing
+
+The test suite covers everything from API rate limiting to BDD scenarios and web search mocking.
 
 ```bash
-# Unit & architecture tests (no API key needed)
+# Run the fast unit test suite 
 uv run pytest -v
 
-# Including live API tests (requires NVIDIA_API_KEY)
-uv run pytest -v --tb=short
-```
-
-## Model Tiers
-
-| Tier | Model | Cost/Call | Use Case |
-|---|---|---|---|
-| ⚡ **Budget** | Llama 3.1 8B | ~$0.0003 | Bulk tasks, high volume |
-| 🔥 **Standard** | Llama 3.1 70B | ~$0.002 | Balanced quality/cost |
-| 💎 **Premium** | Nemotron 70B | ~$0.005 | Highest quality analysis |
-
-## Project Structure
-
-```
-liquid-swarm/
-├── liquid_swarm/
-│   ├── config.py      # NVIDIA NIM model tiers, cost tables, SwarmConfig
-│   ├── graph.py       # LangGraph StateGraph: build & compile
-│   ├── models.py      # Pydantic models: TaskInput, TaskResult, FinalReport
-│   ├── nodes.py       # Graph nodes: router, worker, reduce (+ execute_task)
-│   └── state.py       # TypedDict with Annotated reducers for fan-in
-├── web/
-│   ├── app.py         # FastAPI backend with SSE streaming
-│   └── static/
-│       └── index.html # Real-time swarm visualization dashboard
-├── tests/
-│   ├── features/      # Gherkin BDD scenarios
-│   ├── step_defs/     # pytest-bdd step definitions
-│   ├── test_routing.py
-│   ├── test_timeout.py
-│   ├── test_rate_limit.py
-│   ├── test_assassin_node.py
-│   ├── test_async_worker.py
-│   ├── test_cost_ledger.py
-│   └── test_live_nvidia.py  # Real API integration tests
-├── LICENSE            # Apache 2.0
-├── pyproject.toml
-└── README.md
-```
-
-## Test Coverage
-
-The test suite covers all critical architecture invariants:
-
-| Test | What it proves |
-|---|---|
-| `test_routing` | 10 tasks → exactly 10 `Send` objects, 500 tasks scales |
-| `test_timeout` | 1 dead worker, 49 survivors — no `TimeoutError` propagation |
-| `test_rate_limit` | Semaphore caps concurrent API calls at configured limit |
-| `test_assassin_node` | Impossible values (market_share > 100%) flagged, not crashed |
-| `test_async_worker` | Parallel workers produce correct results via mocked execution |
-| `test_cost_ledger` | Cost tracking is deterministic and accurate |
-| `test_live_nvidia` | End-to-end with real NVIDIA NIM API (skipped without key) |
-| BDD scenarios | Full graph cycles: 1→50→1, rogue workers, timeout isolation |
-
-```bash
+# Run with coverage report
 uv run pytest --cov=liquid_swarm --cov-report=term-missing
-# Target: >90% coverage
 ```
 
-## Contributing
+---
 
-We welcome contributions! Please:
+## 🤝 Contributing
 
-1. Fork the repository
-2. Create a feature branch (`git checkout -b feature/amazing-feature`)
-3. Run the test suite (`uv run pytest`)
-4. Commit your changes (`git commit -m 'Add amazing feature'`)
-5. Push to the branch (`git push origin feature/amazing-feature`)
-6. Open a Pull Request
+We welcome contributions to make Supernova even more powerful! 
 
-## License
+1. Fork the project.
+2. Create your feature branch (`git checkout -b feature/AmazingFeature`).
+3. Ensure TDD tests pass (`uv run pytest`).
+4. Commit your changes (`git commit -m 'feat: Add some AmazingFeature'`).
+5. Push to the branch (`git push origin feature/AmazingFeature`).
+6. Open a Pull Request.
+
+---
+
+## 📄 License
 
 Copyright 2026 [MiMi Tech Ai UG](https://mimitech.ai), Bad Liebenzell, Germany.
 
-Licensed under the Apache License, Version 2.0. See [LICENSE](LICENSE) for details.
+Distributed under the Apache License 2.0. See `LICENSE` for more information.

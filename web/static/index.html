@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Liquid Swarm — Cognitive Supernova</title>
+    <title>Supernova Command Center</title>
     <meta name="description" content="Massively parallel AI agent orchestration in real-time. Open source by MiMi Tech Ai.">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;900&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
@@ -748,7 +748,11 @@
         <!-- Header -->
         <header class="header">
             <div class="header__badge"><span>NVIDIA NIM Powered</span></div>
-            <h1>Liquid Swarm</h1>
+            <div class="header__logo">
+                <i class="fas fa-meteor"></i>
+                <div class="header-glow"></div>
+            </div>
+            <h1>Supernova</h1>
             <p class="header__sub">Cognitive Supernova — Massively parallel AI analysis in real-time</p>
         </header>
 
@@ -852,7 +856,7 @@
         <div class="summary" id="summary">
             <div class="summary__header">
                 <h2>✅ Swarm Complete</h2>
-                <button class="btn-export" onclick="exportReport()">📄 Export Markdown</button>
+                <button class="btn-export" onclick="exportMarkdown()">📄 Export Markdown</button>
             </div>
             <div class="summary__grid">
                 <div class="summary__stat">
@@ -1506,7 +1510,7 @@
         }
 
         function exportReport() {
-            let md = `# Liquid Swarm Analysis Report\n\n`;
+            let md = `# Supernova Analysis Report\n\n`;
             md += `**Generated:** ${new Date().toISOString()}\n`;
             md += `**Query:** ${document.getElementById('queryInput').value}\n`;
             md += `**Workers:** ${allResults.length} | **Cost:** $${totalCost.toFixed(4)}\n\n---\n\n`;

@@ -1,4 +1,4 @@
-"""Liquid Swarm — Live Web UI Backend.
+"""Supernova — Live Web UI Backend.
 
 FastAPI server with SSE streaming for real-time swarm visualization.
 Each worker result is streamed to the frontend as it arrives.
@@ -38,7 +38,7 @@ from liquid_swarm.web_search import (
     parse_sources,
 )
 
-app = FastAPI(title="Liquid Swarm — Live UI")
+app = FastAPI(title="Supernova — Command Center")
 
 
 # ── API Key Authentication Middleware ────────────────────────────────────────
