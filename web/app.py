@@ -37,6 +37,45 @@ from liquid_swarm.synthesis import synthesize_results
 
 app = FastAPI(title="Liquid Swarm — Live UI")
 
+
+# ── API Key Authentication Middleware ────────────────────────────────────────
+# When SWARM_API_KEYS env var is set (comma-separated), all /api/ endpoints
+# require a valid X-Api-Key header. When not set, auth is disabled (dev mode).
+
+@app.middleware("http")
+async def api_key_auth(request: Request, call_next):
+    """Protect /api/ endpoints with API key authentication."""
+    swarm_keys_env = os.environ.get("SWARM_API_KEYS", "")
+
+    # If no API keys configured → open access (dev mode)
+    if not swarm_keys_env:
+        return await call_next(request)
+
+    # Only protect /api/ routes
+    if not request.url.path.startswith("/api/"):
+        return await call_next(request)
+
+    # Parse valid keys (comma-separated)
+    valid_keys = {k.strip() for k in swarm_keys_env.split(",") if k.strip()}
+
+    api_key = request.headers.get("X-Api-Key")
+    if not api_key:
+        from fastapi.responses import JSONResponse
+        return JSONResponse(
+            status_code=401,
+            content={"detail": "API key required. Set X-Api-Key header."},
+        )
+
+    if api_key not in valid_keys:
+        from fastapi.responses import JSONResponse
+        return JSONResponse(
+            status_code=401,
+            content={"detail": "Invalid API key."},
+        )
+
+    return await call_next(request)
+
+
 # Serve static files
 static_dir = Path(__file__).parent / "static"
 app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
