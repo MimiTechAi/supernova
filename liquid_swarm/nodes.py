@@ -170,6 +170,68 @@ async def execute_task(
     )
 
 
+# HTTP status codes that indicate transient failures (worth retrying)
+_TRANSIENT_STATUS_CODES = {429, 500, 502, 503}
+
+
+async def execute_task_with_retry(
+    task: TaskInput,
+    config: SwarmConfig | None = None,
+    max_retries: int = 1,
+) -> TaskResult:
+    """Execute a task with retry logic for transient failures.
+
+    Retries on transient HTTP errors (429, 500, 502, 503) with exponential
+    backoff. Permanent errors (401, 403, 404, 422) fail immediately.
+
+    This function wraps execute_task — zero LangGraph imports, fully
+    portable to serverless runtimes.
+
+    Args:
+        task: The analysis task to execute.
+        config: Optional swarm configuration.
+        max_retries: Number of retry attempts for transient errors.
+
+    Returns:
+        A TaskResult with status 'success' or 'error'.
+    """
+    last_error: str = ""
+
+    for attempt in range(1 + max_retries):
+        try:
+            result = await execute_task(task, config)
+            return result
+        except httpx.HTTPStatusError as exc:
+            status_code = exc.response.status_code
+            last_error = f"HTTP {status_code}: {exc}"
+
+            # Permanent errors — don't retry
+            if status_code not in _TRANSIENT_STATUS_CODES:
+                return TaskResult(
+                    task_id=task.task_id,
+                    status="error",
+                    data={"error": last_error, "retries": attempt},
+                    cost_usd=0.0,
+                )
+
+            # Transient error — retry with backoff if attempts remain
+            if attempt < max_retries:
+                backoff = 0.5 * (2 ** attempt)  # 0.5s, 1s, 2s, ...
+                await asyncio.sleep(backoff)
+        except Exception as exc:
+            last_error = str(exc)
+            if attempt < max_retries:
+                await asyncio.sleep(0.5 * (2 ** attempt))
+
+    # All retries exhausted
+    return TaskResult(
+        task_id=task.task_id,
+        status="error",
+        data={"error": last_error, "retries": max_retries},
+        cost_usd=0.0,
+    )
+
+
 # ── Reduce Node (Aggregation + Assassin Filtering) ─────────────────────────
 
 def reduce_node(state: SwarmState) -> dict[str, list[TaskResult]]:
