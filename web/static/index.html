@@ -576,6 +576,66 @@
             background: none; -webkit-text-fill-color: var(--accent-bright);
         }
 
+        /* ── Confidence Badges ────────────────────────────────── */
+        .confidence-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.25rem;
+            padding: 0.15rem 0.5rem;
+            border-radius: 50px;
+            font-size: 0.7rem;
+            font-weight: 600;
+        }
+        .confidence-badge.high {
+            background: rgba(52, 211, 153, 0.15);
+            color: var(--success);
+            border: 1px solid rgba(52, 211, 153, 0.3);
+        }
+        .confidence-badge.medium {
+            background: rgba(251, 191, 36, 0.15);
+            color: var(--warning);
+            border: 1px solid rgba(251, 191, 36, 0.3);
+        }
+        .confidence-badge.low {
+            background: rgba(248, 113, 113, 0.15);
+            color: var(--error);
+            border: 1px solid rgba(248, 113, 113, 0.3);
+        }
+
+        /* ── Cost Estimate Bar ────────────────────────────────── */
+        .cost-estimate {
+            display: none;
+            padding: 0.5rem 1rem;
+            background: rgba(99, 102, 241, 0.08);
+            border: 1px solid var(--border);
+            border-radius: var(--radius-sm);
+            font-size: 0.78rem;
+            color: var(--text-secondary);
+            margin-top: 0.6rem;
+            animation: card-in 0.3s forwards;
+        }
+
+        /* ── Custom Prompt Area ───────────────────────────────── */
+        .custom-prompt-area {
+            margin-bottom: 0.5rem;
+        }
+        .custom-prompt-area textarea {
+            width: 100%;
+            padding: 0.6rem 0.8rem;
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: var(--radius-sm);
+            color: var(--text-primary);
+            font-family: var(--font-mono);
+            font-size: 0.8rem;
+            resize: vertical;
+            transition: border-color 0.2s;
+        }
+        .custom-prompt-area textarea:focus {
+            outline: none;
+            border-color: var(--accent);
+        }
+
         .summary {
             display: none;
             background: var(--bg-card);
@@ -715,21 +775,41 @@
                 </div>
             </div>
 
+            <!-- Custom Prompt Area (shown when Custom is selected) -->
+            <div class="custom-prompt-area" id="customPromptArea" style="display:none;">
+                <textarea id="customPromptInput" placeholder="Enter your custom system prompt... e.g. 'You are a senior DevOps engineer. Analyze infrastructure configurations...'" rows="2"></textarea>
+            </div>
+
             <div class="input-panel__controls">
+                <div class="control-group">
+                    <label>Role</label>
+                    <select id="promptPreset">
+                        <option value="market_analyst">📊 Market Analyst</option>
+                        <option value="code_reviewer">💻 Code Reviewer</option>
+                        <option value="research_scientist">🔬 Research Scientist</option>
+                        <option value="legal_analyst">⚖️ Legal Analyst</option>
+                        <option value="custom">✏️ Custom</option>
+                    </select>
+                </div>
                 <div class="control-group">
                     <label>Workers</label>
                     <input type="number" id="numTasks" value="8" min="2" max="30" step="1">
                 </div>
                 <div class="control-group">
                     <label>Model</label>
-                    <select id="modelTier">
-                        <option value="BUDGET">⚡ Llama 8B — $0.0003</option>
-                        <option value="STANDARD">🔥 Llama 70B — $0.002</option>
-                        <option value="PREMIUM">💎 Nemotron 70B — $0.005</option>
-                    </select>
+                    <select id="modelSelect"></select>
+                </div>
+                <div class="control-group">
+                    <label>Budget ($)</label>
+                    <input type="number" id="costBudget" value="" min="0.01" max="10" step="0.01" placeholder="∞">
                 </div>
                 <button class="btn-ignite" id="igniteBtn" onclick="igniteSwarm()">🚀 IGNITE</button>
                 <button class="btn-clear" id="clearBtn" onclick="clearAll()">Clear</button>
+            </div>
+
+            <!-- Cost Estimate Bar -->
+            <div class="cost-estimate" id="costEstimate" style="display:none;">
+                <span id="costEstimateText"></span>
             </div>
         </section>
 
@@ -1060,7 +1140,12 @@
             document.getElementById('validationMsg').classList.remove('visible');
 
             const numTasks = parseInt(document.getElementById('numTasks').value);
-            const modelTier = document.getElementById('modelTier').value;
+            const modelSelect = document.getElementById('modelSelect');
+            const selectedModel = modelSelect.value;
+            const promptPreset = document.getElementById('promptPreset').value;
+            const customPrompt = document.getElementById('customPromptInput').value.trim();
+            const budgetVal = document.getElementById('costBudget').value;
+            const costBudget = budgetVal ? parseFloat(budgetVal) : null;
 
             // Reset UI
             const btn = document.getElementById('igniteBtn');
@@ -1070,12 +1155,14 @@
 
             document.getElementById('workersGrid').innerHTML = '';
             document.getElementById('summary').classList.remove('visible');
+            document.getElementById('synthesisPanel').classList.remove('visible');
             document.getElementById('statusBar').classList.add('visible');
             document.getElementById('completedCount').textContent = '0';
             document.getElementById('totalCount').textContent = '?';
             document.getElementById('runningCost').textContent = '$0.0000';
             document.getElementById('progressFill').style.width = '0%';
             document.getElementById('spinner').style.display = '';
+            document.getElementById('costEstimate').style.display = 'none';
             tasks = {};
             allResults = [];
             totalCost = 0;
@@ -1092,10 +1179,19 @@
             vizSetState('decomposing');
 
             try {
+                const payload = {
+                    query,
+                    num_tasks: numTasks,
+                    model: selectedModel,
+                    system_prompt: promptPreset,
+                    custom_prompt: promptPreset === 'custom' ? customPrompt : '',
+                    cost_budget: costBudget,
+                };
+
                 const response = await fetch('/api/ignite', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ query, num_tasks: numTasks, model_tier: modelTier }),
+                    body: JSON.stringify(payload),
                 });
 
                 const reader = response.body.getReader();
@@ -1139,6 +1235,9 @@
                 case 'phase':
                     document.getElementById('phaseText').textContent = data.message;
                     break;
+                case 'cost_estimate':
+                    handleCostEstimate(data);
+                    break;
                 case 'tasks':
                     handleTasksList(data);
                     break;
@@ -1147,6 +1246,12 @@
                     break;
                 case 'synthesis':
                     handleSynthesis(data);
+                    break;
+                case 'synthesis_token':
+                    handleSynthesisToken(data);
+                    break;
+                case 'synthesis_complete':
+                    handleSynthesisComplete(data);
                     break;
                 case 'complete':
                     handleComplete(data);
@@ -1158,6 +1263,17 @@
             }
         }
 
+        function handleCostEstimate(data) {
+            const el = document.getElementById('costEstimate');
+            const text = document.getElementById('costEstimateText');
+            let msg = `💰 Estimated cost: $${data.estimated_cost.toFixed(4)} ($${data.cost_per_worker.toFixed(4)}/worker)`;
+            if (data.budget) {
+                msg += ` · Budget: $${data.budget.toFixed(2)}`;
+            }
+            text.textContent = msg;
+            el.style.display = 'block';
+        }
+
         function handleSynthesis(data) {
             const panel = document.getElementById('synthesisPanel');
             const content = document.getElementById('synthesisContent');
@@ -1167,6 +1283,28 @@
                 document.getElementById('runningCost').textContent = `$${totalCost.toFixed(4)}`;
             }
             panel.classList.add('visible');
+        }
+
+        let synthesisBuffer = '';
+        function handleSynthesisToken(data) {
+            const panel = document.getElementById('synthesisPanel');
+            const content = document.getElementById('synthesisContent');
+            if (!panel.classList.contains('visible')) {
+                synthesisBuffer = '';
+                panel.classList.add('visible');
+            }
+            synthesisBuffer += data.token;
+            content.innerHTML = renderMarkdown(synthesisBuffer);
+        }
+
+        function handleSynthesisComplete(data) {
+            synthesisBuffer = '';
+            const content = document.getElementById('synthesisContent');
+            content.innerHTML = renderMarkdown(data.summary || '');
+            if (data.cost_usd) {
+                totalCost += data.cost_usd;
+                document.getElementById('runningCost').textContent = `$${totalCost.toFixed(4)}`;
+            }
         }
 
         function handleTasksList(data) {
@@ -1235,15 +1373,22 @@
             }
             resultEl.classList.add('visible');
 
-            // Show meta
+            // Show meta + confidence badge
             const metaEl = document.getElementById(`meta-${data.task_id}`);
             if (data.data.latency_seconds) {
-                metaEl.innerHTML = `
+                let metaHtml = `
                     <span>⏱ ${data.data.latency_seconds}s</span>
                     <span>📥 ${data.data.prompt_tokens || '?'} tok</span>
                     <span>📤 ${data.data.completion_tokens || '?'} tok</span>
                     <span>💰 $${data.cost_usd.toFixed(4)}</span>
                 `;
+                // Confidence badge
+                if (data.data.confidence !== null && data.data.confidence !== undefined) {
+                    const conf = data.data.confidence;
+                    const confClass = conf >= 80 ? 'high' : conf >= 50 ? 'medium' : 'low';
+                    metaHtml += `<span class="confidence-badge ${confClass}">🎯 ${conf}%</span>`;
+                }
+                metaEl.innerHTML = metaHtml;
                 metaEl.classList.add('visible');
             }
 
@@ -1346,6 +1491,34 @@
             a.click();
             URL.revokeObjectURL(url);
         }
+
+        // ══════════════════════════════════════════════════════
+        // INIT: Load config from backend
+        // ══════════════════════════════════════════════════════
+        async function loadConfig() {
+            try {
+                const resp = await fetch('/api/config');
+                const cfg = await resp.json();
+                const select = document.getElementById('modelSelect');
+                select.innerHTML = '';
+                cfg.models.forEach(m => {
+                    const opt = document.createElement('option');
+                    opt.value = m.id;
+                    opt.textContent = `${m.name} — $${m.cost}`;
+                    if (m.id === cfg.default_model) opt.selected = true;
+                    select.appendChild(opt);
+                });
+            } catch (e) {
+                console.warn('Could not load config:', e);
+            }
+        }
+        loadConfig();
+
+        // Prompt preset toggle
+        document.getElementById('promptPreset').addEventListener('change', (e) => {
+            const area = document.getElementById('customPromptArea');
+            area.style.display = e.target.value === 'custom' ? 'block' : 'none';
+        });
 
         // Enter key to ignite
         document.getElementById('queryInput').addEventListener('keydown', (e) => {

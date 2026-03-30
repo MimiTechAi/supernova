@@ -2,6 +2,7 @@
 
 FastAPI server with SSE streaming for real-time swarm visualization.
 Each worker result is streamed to the frontend as it arrives.
+Supports multiple LLM providers: NVIDIA NIM, OpenAI, Anthropic, Ollama.
 
 Copyright 2026 MiMi Tech Ai UG, Bad Liebenzell, Germany.
 Licensed under the Apache License, Version 2.0.
@@ -15,24 +16,18 @@ import os
 import sys
 import time
 from pathlib import Path
+from typing import AsyncGenerator
 
 import httpx
 from fastapi import FastAPI, Request
-from fastapi.responses import HTMLResponse, StreamingResponse
+from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 # Ensure project root is importable
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from liquid_swarm.config import (
-    NVIDIA_API_BASE,
-    NVIDIA_API_KEY,
-    MODEL_COST,
-    ModelTier,
-    SwarmConfig,
-)
 from liquid_swarm.models import TaskInput, TaskResult
-from liquid_swarm.nodes import set_api_semaphore
+from liquid_swarm.providers import LLMProvider, ProviderConfig, get_provider_config
 from liquid_swarm.synthesis import synthesize_results
 from liquid_swarm.persistence import save_run, list_runs, get_run
 
@@ -40,35 +35,28 @@ app = FastAPI(title="Liquid Swarm — Live UI")
 
 
 # ── API Key Authentication Middleware ────────────────────────────────────────
-# When SWARM_API_KEYS env var is set (comma-separated), all /api/ endpoints
-# require a valid X-Api-Key header. When not set, auth is disabled (dev mode).
 
 @app.middleware("http")
 async def api_key_auth(request: Request, call_next):
     """Protect /api/ endpoints with API key authentication."""
     swarm_keys_env = os.environ.get("SWARM_API_KEYS", "")
 
-    # If no API keys configured → open access (dev mode)
     if not swarm_keys_env:
         return await call_next(request)
 
-    # Only protect /api/ routes
     if not request.url.path.startswith("/api/"):
         return await call_next(request)
 
-    # Parse valid keys (comma-separated)
     valid_keys = {k.strip() for k in swarm_keys_env.split(",") if k.strip()}
 
     api_key = request.headers.get("X-Api-Key")
     if not api_key:
-        from fastapi.responses import JSONResponse
         return JSONResponse(
             status_code=401,
             content={"detail": "API key required. Set X-Api-Key header."},
         )
 
     if api_key not in valid_keys:
-        from fastapi.responses import JSONResponse
         return JSONResponse(
             status_code=401,
             content={"detail": "Invalid API key."},
@@ -91,56 +79,138 @@ async def index():
 
 @app.get("/api/config")
 async def get_config():
-    """Return available models and default config."""
+    """Return available providers, models and default config."""
+    provider_cfg = get_provider_config()
     return {
-        "models": [
-            {"id": tier.value, "name": tier.name, "cost": MODEL_COST[tier]}
-            for tier in ModelTier
+        "provider": provider_cfg.provider.value,
+        "models": provider_cfg.available_models,
+        "default_model": provider_cfg.default_model,
+        "has_api_key": bool(provider_cfg.api_key),
+        "available_providers": [
+            {"id": p.value, "name": p.value.upper()} for p in LLMProvider
         ],
-        "has_api_key": bool(NVIDIA_API_KEY),
     }
 
 
-async def _generate_subtasks(
-    main_query: str,
-    num_tasks: int,
-    config: SwarmConfig,
-) -> list[str]:
-    """Use the LLM to break a main query into N sub-tasks."""
-    prompt = (
-        f"You are a project manager. Break the following task into exactly "
-        f"{num_tasks} specific, independent sub-tasks for parallel analysis.\n\n"
-        f"Main task: {main_query}\n\n"
-        f"Reply ONLY with a numbered list (1. ... 2. ... etc.), "
-        f"without introduction or explanation. Each sub-task should be a concrete "
-        f"analysis question that a single analyst can answer."
-    )
+def _build_provider_config(model_id: str = "", provider_str: str = "") -> ProviderConfig:
+    """Build a ProviderConfig from request params, falling back to env vars."""
+    base_cfg = get_provider_config()
 
+    # Allow override from request
+    if provider_str:
+        try:
+            base_cfg.provider = LLMProvider(provider_str.lower())
+        except ValueError:
+            pass
+
+    if model_id:
+        base_cfg.default_model = model_id
+
+    return base_cfg
+
+
+async def _llm_call(
+    provider_cfg: ProviderConfig,
+    messages: list[dict],
+    max_tokens: int = 512,
+    temperature: float = 0.2,
+    stream: bool = False,
+) -> dict:
+    """Unified LLM API call that works with any provider.
+
+    All supported providers use the OpenAI-compatible /v1/chat/completions
+    endpoint. Returns the raw response dict.
+    """
     payload = {
-        "model": config.model_id,
-        "messages": [
-            {"role": "system", "content": "You are a precise project manager."},
-            {"role": "user", "content": prompt},
-        ],
-        "max_tokens": 1024,
-        "temperature": 0.3,
-        "stream": False,
+        "model": provider_cfg.default_model,
+        "messages": messages,
+        "max_tokens": max_tokens,
+        "temperature": temperature,
+        "stream": stream,
     }
 
-    headers = {
-        "Authorization": f"Bearer {NVIDIA_API_KEY}",
-        "Content-Type": "application/json",
-    }
+    headers = provider_cfg.get_headers()
 
     async with httpx.AsyncClient(timeout=30.0) as client:
         resp = await client.post(
-            f"{NVIDIA_API_BASE}/chat/completions",
+            f"{provider_cfg.base_url}/chat/completions",
             json=payload,
             headers=headers,
         )
         resp.raise_for_status()
 
-    body = resp.json()
+    return resp.json()
+
+
+async def _llm_call_stream(
+    provider_cfg: ProviderConfig,
+    messages: list[dict],
+    max_tokens: int = 768,
+    temperature: float = 0.3,
+) -> AsyncGenerator[str, None]:
+    """Streaming LLM call — yields tokens as they arrive."""
+    payload = {
+        "model": provider_cfg.default_model,
+        "messages": messages,
+        "max_tokens": max_tokens,
+        "temperature": temperature,
+        "stream": True,
+    }
+
+    headers = provider_cfg.get_headers()
+
+    async with httpx.AsyncClient(timeout=60.0) as client:
+        async with client.stream(
+            "POST",
+            f"{provider_cfg.base_url}/chat/completions",
+            json=payload,
+            headers=headers,
+        ) as response:
+            response.raise_for_status()
+            async for line in response.aiter_lines():
+                if not line.startswith("data: "):
+                    continue
+                data = line[6:]
+                if data.strip() == "[DONE]":
+                    break
+                try:
+                    chunk = json.loads(data)
+                    delta = chunk["choices"][0].get("delta", {})
+                    content = delta.get("content", "")
+                    if content:
+                        yield content
+                except (json.JSONDecodeError, KeyError, IndexError):
+                    continue
+
+
+async def _generate_subtasks(
+    main_query: str,
+    num_tasks: int,
+    provider_cfg: ProviderConfig,
+    system_prompt_context: str = "",
+) -> list[str]:
+    """Use the LLM to break a main query into N sub-tasks."""
+    role_context = f"\nContext: Workers will act as: {system_prompt_context}" if system_prompt_context else ""
+
+    prompt = (
+        f"You are a project manager. Break the following task into exactly "
+        f"{num_tasks} specific, independent sub-tasks for parallel analysis.\n\n"
+        f"Main task: {main_query}{role_context}\n\n"
+        f"Reply ONLY with a numbered list (1. ... 2. ... etc.), "
+        f"without introduction or explanation. Each sub-task should be a concrete "
+        f"analysis question that a single analyst can answer."
+    )
+
+    body = await _llm_call(
+        provider_cfg,
+        messages=[
+            {"role": "system", "content": "You are a precise project manager."},
+            {"role": "user", "content": prompt},
+        ],
+        max_tokens=1024,
+        temperature=0.3,
+    )
+
     text = body["choices"][0]["message"]["content"]
 
     # Parse numbered list
@@ -150,15 +220,12 @@ async def _generate_subtasks(
         if line.strip() and line.strip()[0].isdigit()
     ]
 
-    # Clean up numbering
     subtasks = []
     for line in lines[:num_tasks]:
-        # Remove "1. ", "2) ", etc.
         cleaned = line.lstrip("0123456789.)- ").strip()
         if cleaned:
             subtasks.append(cleaned)
 
-    # Fallback if parsing fails
     while len(subtasks) < num_tasks:
         subtasks.append(f"Analyze aspect {len(subtasks)+1} of: {main_query}")
 
@@ -168,59 +235,61 @@ async def _generate_subtasks(
 async def _execute_single_task(
     task: TaskInput,
     semaphore: asyncio.Semaphore,
-    config: SwarmConfig,
+    provider_cfg: ProviderConfig,
+    system_prompt: str = "",
+    max_tokens: int = 512,
+    temperature: float = 0.2,
+    cost_budget_remaining: float | None = None,
 ) -> TaskResult:
     """Execute a single task with semaphore rate limiting."""
-    payload = {
-        "model": config.model_id,
-        "messages": [
-            {
-                "role": "system",
-                "content": (
-                    "You are a precise market analyst. Respond with structure "
-                    "and concrete numbers. Maximum 4-5 sentences."
-                ),
-            },
-            {"role": "user", "content": task.query},
-        ],
-        "max_tokens": config.max_tokens,
-        "temperature": config.temperature,
-        "stream": False,
-    }
+    worker_prompt = system_prompt or (
+        "You are a precise analyst. Respond with structure "
+        "and concrete data. Maximum 4-5 sentences."
+    )
 
-    headers = {
-        "Authorization": f"Bearer {NVIDIA_API_KEY}",
-        "Content-Type": "application/json",
-    }
+    # Budget guard: if remaining budget is 0 or negative, skip
+    cost_per_call = provider_cfg.get_model_cost(provider_cfg.default_model)
+    if cost_budget_remaining is not None and cost_budget_remaining < cost_per_call:
+        return TaskResult(
+            task_id=task.task_id,
+            status="error",
+            data={"error": "Budget exceeded — worker skipped"},
+            cost_usd=0.0,
+        )
 
     t0 = time.perf_counter()
 
     try:
         async with semaphore:
-            async with httpx.AsyncClient(timeout=25.0) as client:
-                resp = await client.post(
-                    f"{NVIDIA_API_BASE}/chat/completions",
-                    json=payload,
-                    headers=headers,
-                )
-                resp.raise_for_status()
+            body = await _llm_call(
+                provider_cfg,
+                messages=[
+                    {"role": "system", "content": worker_prompt},
+                    {"role": "user", "content": task.query},
+                ],
+                max_tokens=max_tokens,
+                temperature=temperature,
+            )
 
         elapsed = time.perf_counter() - t0
-        body = resp.json()
         llm_output = body["choices"][0]["message"]["content"]
         usage = body.get("usage", {})
+
+        # Parse confidence if present
+        confidence = _parse_confidence(llm_output)
 
         return TaskResult(
             task_id=task.task_id,
             status="success",
             data={
                 "result": llm_output,
-                "model": config.model_id,
+                "model": provider_cfg.default_model,
                 "prompt_tokens": usage.get("prompt_tokens", 0),
                 "completion_tokens": usage.get("completion_tokens", 0),
                 "latency_seconds": round(elapsed, 3),
+                "confidence": confidence,
             },
-            cost_usd=config.cost_per_call,
+            cost_usd=cost_per_call,
         )
     except asyncio.TimeoutError:
         return TaskResult(
@@ -236,35 +305,120 @@ async def _execute_single_task(
         )
 
 
+def _parse_confidence(text: str) -> int | None:
+    """Extract [CONFIDENCE: XX] tag from LLM output."""
+    import re
+    match = re.search(r'\[CONFIDENCE:\s*(\d+)\s*%?\]', text, re.IGNORECASE)
+    if match:
+        val = int(match.group(1))
+        return max(0, min(100, val))
+    return None
+
+
+# ── Prompt Presets ───────────────────────────────────────────────────────────
+
+PROMPT_PRESETS = {
+    "market_analyst": {
+        "name": "Market Analyst",
+        "icon": "📊",
+        "prompt": (
+            "You are a precise market analyst. Respond with structure "
+            "and concrete numbers when possible. Maximum 4-5 sentences. "
+            "End your response with [CONFIDENCE: X%] where X is your "
+            "confidence level (0-100) based on data availability."
+        ),
+    },
+    "code_reviewer": {
+        "name": "Code Reviewer",
+        "icon": "💻",
+        "prompt": (
+            "You are a senior software engineer performing code review. "
+            "Focus on: bugs, security issues, performance, best practices. "
+            "Be specific and actionable. Maximum 4-5 sentences. "
+            "End with [CONFIDENCE: X%] based on code clarity."
+        ),
+    },
+    "research_scientist": {
+        "name": "Research Scientist",
+        "icon": "🔬",
+        "prompt": (
+            "You are a research scientist. Analyze with academic rigor. "
+            "Cite sources where possible, evaluate evidence quality. "
+            "Distinguish between established facts and hypotheses. Maximum 4-5 sentences. "
+            "End with [CONFIDENCE: X%] based on evidence strength."
+        ),
+    },
+    "legal_analyst": {
+        "name": "Legal Analyst",
+        "icon": "⚖️",
+        "prompt": (
+            "You are a legal analyst. Identify relevant regulations, "
+            "compliance risks, and legal implications. Be precise about "
+            "jurisdictions. Maximum 4-5 sentences. "
+            "End with [CONFIDENCE: X%] based on regulatory clarity."
+        ),
+    },
+    "custom": {
+        "name": "Custom",
+        "icon": "✏️",
+        "prompt": "",
+    },
+}
+
+
+@app.get("/api/prompts")
+async def get_prompts():
+    """Return available system prompt presets."""
+    return {
+        "presets": [
+            {"id": k, "name": v["name"], "icon": v["icon"], "prompt": v["prompt"]}
+            for k, v in PROMPT_PRESETS.items()
+        ]
+    }
+
+
 @app.post("/api/ignite")
 async def ignite_swarm(request: Request):
     """Start the swarm and stream results via SSE."""
     body = await request.json()
     main_query = body.get("query", "")
     num_tasks = min(max(int(body.get("num_tasks", 5)), 1), 50)
-    model_tier_str = body.get("model_tier", "BUDGET")
+    model_id = body.get("model", "")
+    provider_str = body.get("provider", "")
+    system_prompt_id = body.get("system_prompt", "market_analyst")
+    custom_prompt = body.get("custom_prompt", "")
+    cost_budget = body.get("cost_budget", None)
 
-    try:
-        model_tier = ModelTier[model_tier_str]
-    except KeyError:
-        model_tier = ModelTier.BUDGET
+    # Resolve provider
+    provider_cfg = _build_provider_config(model_id, provider_str)
 
-    config = SwarmConfig(
-        model_tier=model_tier,
-        max_tokens=512,
-        temperature=0.2,
-    )
+    # Resolve system prompt
+    if system_prompt_id == "custom" and custom_prompt:
+        system_prompt = custom_prompt
+    elif system_prompt_id in PROMPT_PRESETS:
+        system_prompt = PROMPT_PRESETS[system_prompt_id]["prompt"]
+    else:
+        system_prompt = PROMPT_PRESETS["market_analyst"]["prompt"]
 
+    cost_per_call = provider_cfg.get_model_cost(provider_cfg.default_model)
     semaphore = asyncio.Semaphore(10)
 
     async def event_stream():
         t_total = time.perf_counter()
 
+        # Pre-run cost estimate
+        estimated_cost = cost_per_call * (num_tasks + 2)  # workers + decomp + synthesis
+        yield _sse_event("cost_estimate", {
+            "estimated_cost": round(estimated_cost, 6),
+            "cost_per_worker": cost_per_call,
+            "budget": cost_budget,
+        })
+
         # Phase 1: Generate subtasks
         yield _sse_event("phase", {"phase": "decomposing", "message": "Decomposing task into sub-tasks..."})
 
         try:
-            subtasks = await _generate_subtasks(main_query, num_tasks, config)
+            subtasks = await _generate_subtasks(main_query, num_tasks, provider_cfg, system_prompt)
         except Exception as e:
             yield _sse_event("error", {"message": f"Error during task decomposition: {e}"})
             return
@@ -277,25 +431,29 @@ async def ignite_swarm(request: Request):
         # Phase 2: Send task list to frontend
         yield _sse_event("tasks", {
             "tasks": [{"id": t.task_id, "query": t.query} for t in tasks],
-            "model": config.model_id,
-            "cost_per_call": config.cost_per_call,
+            "model": provider_cfg.default_model,
+            "provider": provider_cfg.provider.value,
+            "cost_per_call": cost_per_call,
         })
 
-        # Phase 3: Execute all tasks in parallel, stream each result
+        # Phase 3: Execute all tasks in parallel
         yield _sse_event("phase", {"phase": "executing", "message": f"Igniting {len(tasks)} workers..."})
 
         completed = 0
         total_cost = 0.0
         all_results: list[TaskResult] = []
 
-        async def run_and_stream(task: TaskInput):
-            """Run a single task and return its result."""
-            return await _execute_single_task(task, semaphore, config)
+        async def run_task(task: TaskInput):
+            budget_remaining = None
+            if cost_budget is not None:
+                budget_remaining = cost_budget - total_cost
+            return await _execute_single_task(
+                task, semaphore, provider_cfg, system_prompt,
+                cost_budget_remaining=budget_remaining,
+            )
 
-        # Create all task coroutines
-        coros = [run_and_stream(t) for t in tasks]
+        coros = [run_task(t) for t in tasks]
 
-        # Use asyncio.as_completed to stream results as they finish
         for future in asyncio.as_completed(coros):
             result = await future
             completed += 1
@@ -311,45 +469,76 @@ async def ignite_swarm(request: Request):
                 "total": len(tasks),
             })
 
-        # Phase 4: Synthesis — combine all results into executive summary
+        # Phase 4: Streaming Synthesis
         yield _sse_event("phase", {"phase": "synthesizing", "message": "Synthesizing executive summary..."})
 
+        synthesis_text = ""
         try:
-            synthesis = await synthesize_results(all_results, config)
-            synthesis_cost = config.cost_per_call
-            total_cost += synthesis_cost
-            yield _sse_event("synthesis", {
-                "summary": synthesis,
-                "cost_usd": synthesis_cost,
-            })
+            successful = [r for r in all_results if r.status == "success" and r.data.get("result")]
+
+            if not successful:
+                synthesis_text = "No successful worker results available for synthesis."
+                yield _sse_event("synthesis", {"summary": synthesis_text, "cost_usd": 0.0})
+            else:
+                # Build context
+                findings = [f"Finding {i}: {r.data['result']}" for i, r in enumerate(successful, 1)]
+                context = "\n\n".join(findings)
+
+                synth_prompt = (
+                    "You are a senior analyst. Below are findings from multiple parallel "
+                    "research agents. Synthesize them into a coherent executive summary.\n\n"
+                    "Requirements:\n"
+                    "- Start with a one-sentence headline\n"
+                    "- Combine and deduplicate insights\n"
+                    "- Highlight key numbers and trends\n"
+                    "- Keep it under 200 words\n"
+                    "- Use structured formatting (bold headers, bullet points)\n\n"
+                    f"--- FINDINGS ---\n\n{context}\n\n--- END FINDINGS ---\n\n"
+                    "Executive Summary:"
+                )
+
+                messages = [
+                    {"role": "system", "content": "You are a senior analyst creating executive summaries."},
+                    {"role": "user", "content": synth_prompt},
+                ]
+
+                # Token-by-token streaming
+                async for token in _llm_call_stream(provider_cfg, messages):
+                    synthesis_text += token
+                    yield _sse_event("synthesis_token", {"token": token})
+
+                synthesis_cost = cost_per_call
+                total_cost += synthesis_cost
+                yield _sse_event("synthesis_complete", {
+                    "summary": synthesis_text,
+                    "cost_usd": synthesis_cost,
+                })
+
         except Exception as e:
-            yield _sse_event("synthesis", {
-                "summary": f"Synthesis unavailable: {e}",
-                "cost_usd": 0.0,
-            })
+            synthesis_text = f"Synthesis unavailable: {e}"
+            yield _sse_event("synthesis", {"summary": synthesis_text, "cost_usd": 0.0})
 
         # Phase 5: Completion + Persistence
         elapsed = time.perf_counter() - t_total
 
-        # Auto-save run to history
-        synthesis_text = synthesis if 'synthesis' in dir() else None
         try:
             run_id = save_run(
                 query=main_query,
                 results=all_results,
                 total_cost=round(total_cost, 6),
                 total_time=round(elapsed, 2),
-                model=config.model_id,
-                synthesis=synthesis_text,
+                model=provider_cfg.default_model,
+                synthesis=synthesis_text or None,
             )
         except Exception:
             run_id = None
 
+        success_count = sum(1 for r in all_results if r.status == "success")
         yield _sse_event("complete", {
             "total_time": round(elapsed, 2),
             "total_cost": round(total_cost, 6),
             "total_tasks": len(tasks),
-            "success_count": completed,
+            "success_count": success_count,
             "run_id": run_id,
         })
 
@@ -382,7 +571,6 @@ async def api_get_run(run_id: str):
     """Retrieve a specific run by ID."""
     run = get_run(run_id)
     if run is None:
-        from fastapi.responses import JSONResponse
         return JSONResponse(status_code=404, content={"detail": "Run not found"})
     return run
 
