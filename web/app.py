@@ -33,6 +33,7 @@ from liquid_swarm.config import (
 )
 from liquid_swarm.models import TaskInput, TaskResult
 from liquid_swarm.nodes import set_api_semaphore
+from liquid_swarm.synthesis import synthesize_results
 
 app = FastAPI(title="Liquid Swarm — Live UI")
 
@@ -245,6 +246,7 @@ async def ignite_swarm(request: Request):
 
         completed = 0
         total_cost = 0.0
+        all_results: list[TaskResult] = []
 
         async def run_and_stream(task: TaskInput):
             """Run a single task and return its result."""
@@ -258,6 +260,7 @@ async def ignite_swarm(request: Request):
             result = await future
             completed += 1
             total_cost += result.cost_usd
+            all_results.append(result)
 
             yield _sse_event("result", {
                 "task_id": result.task_id,
@@ -268,7 +271,24 @@ async def ignite_swarm(request: Request):
                 "total": len(tasks),
             })
 
-        # Phase 4: Summary
+        # Phase 4: Synthesis — combine all results into executive summary
+        yield _sse_event("phase", {"phase": "synthesizing", "message": "Synthesizing executive summary..."})
+
+        try:
+            synthesis = await synthesize_results(all_results, config)
+            synthesis_cost = config.cost_per_call
+            total_cost += synthesis_cost
+            yield _sse_event("synthesis", {
+                "summary": synthesis,
+                "cost_usd": synthesis_cost,
+            })
+        except Exception as e:
+            yield _sse_event("synthesis", {
+                "summary": f"Synthesis unavailable: {e}",
+                "cost_usd": 0.0,
+            })
+
+        # Phase 5: Completion
         elapsed = time.perf_counter() - t_total
         yield _sse_event("complete", {
             "total_time": round(elapsed, 2),

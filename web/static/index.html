@@ -539,6 +539,43 @@
         .worker-card__meta span { display: flex; align-items: center; gap: 0.25rem; }
 
         /* ── Summary Panel ─────────────────────────────────── */
+        .synthesis {
+            display: none;
+            background: var(--bg-card);
+            border: 1px solid rgba(129, 140, 248, 0.25);
+            border-radius: var(--radius-lg);
+            padding: 1.8rem;
+            backdrop-filter: blur(20px);
+            animation: card-in 0.6s forwards;
+            margin-bottom: 1.5rem;
+        }
+
+        .synthesis.visible { display: block; }
+
+        .synthesis h3 {
+            font-size: 1.1rem;
+            font-weight: 700;
+            background: linear-gradient(135deg, var(--accent-bright), #a78bfa);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            margin-bottom: 1rem;
+        }
+
+        .synthesis__content {
+            font-size: 0.9rem;
+            color: var(--text-primary);
+            line-height: 1.7;
+        }
+
+        .synthesis__content strong { color: var(--accent-bright); }
+        .synthesis__content ul, .synthesis__content ol { margin: 0.3rem 0; padding-left: 1.2rem; }
+        .synthesis__content li { margin-bottom: 0.15rem; }
+        .synthesis__content h1, .synthesis__content h2, .synthesis__content h3 {
+            font-size: 0.95rem; font-weight: 700; color: var(--accent-bright); margin: 0.5rem 0 0.2rem;
+            background: none; -webkit-text-fill-color: var(--accent-bright);
+        }
+
         .summary {
             display: none;
             background: var(--bg-card);
@@ -718,6 +755,12 @@
 
         <!-- Worker Grid -->
         <div class="workers-grid" id="workersGrid"></div>
+
+        <!-- Synthesis Panel -->
+        <div class="synthesis" id="synthesisPanel">
+            <h3>🧠 Executive Summary</h3>
+            <div class="synthesis__content" id="synthesisContent"></div>
+        </div>
 
         <!-- Summary Panel -->
         <div class="summary" id="summary">
@@ -1102,6 +1145,9 @@
                 case 'result':
                     handleWorkerResult(data);
                     break;
+                case 'synthesis':
+                    handleSynthesis(data);
+                    break;
                 case 'complete':
                     handleComplete(data);
                     break;
@@ -1110,6 +1156,17 @@
                     vizSetState('idle');
                     break;
             }
+        }
+
+        function handleSynthesis(data) {
+            const panel = document.getElementById('synthesisPanel');
+            const content = document.getElementById('synthesisContent');
+            content.innerHTML = renderMarkdown(data.summary || '');
+            if (data.cost_usd) {
+                totalCost += data.cost_usd;
+                document.getElementById('runningCost').textContent = `$${totalCost.toFixed(4)}`;
+            }
+            panel.classList.add('visible');
         }
 
         function handleTasksList(data) {
@@ -1238,6 +1295,7 @@
             document.getElementById('queryInput').value = '';
             document.getElementById('workersGrid').innerHTML = '';
             document.getElementById('summary').classList.remove('visible');
+            document.getElementById('synthesisPanel').classList.remove('visible');
             document.getElementById('statusBar').classList.remove('visible');
             document.getElementById('validationMsg').classList.remove('visible');
             document.getElementById('queryInput').classList.remove('invalid');
