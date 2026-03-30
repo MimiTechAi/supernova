@@ -406,6 +406,17 @@ PROMPT_PRESETS = {
             "End with [CONFIDENCE: X%] based on regulatory clarity."
         ),
     },
+    "futurist": {
+        "name": "Predictive Futurist",
+        "icon": "🔮",
+        "prompt": (
+            "You are a predictive futurist specialized in extrapolating current "
+            "data into future trends. Analyze the provided current context and "
+            "predict outcomes 3-5 years into the future. Identify structural shifts, "
+            "emerging risks, and high-probability scenarios. Maximum 4-5 sentences. "
+            "End with [CONFIDENCE: X%] based on data stability."
+        ),
+    },
     "custom": {
         "name": "Custom",
         "icon": "✏️",
@@ -430,7 +441,7 @@ async def ignite_swarm(request: Request):
     """Start the swarm and stream results via SSE."""
     body = await request.json()
     main_query = body.get("query", "")
-    num_tasks = min(max(int(body.get("num_tasks", 5)), 1), 50)
+    num_tasks = min(max(int(body.get("num_tasks", 5)), 1), 250)
     model_id = body.get("model", "")
     provider_str = body.get("provider", "")
     system_prompt_id = body.get("system_prompt", "market_analyst")
