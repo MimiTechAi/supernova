@@ -138,7 +138,7 @@ async def _llm_call(
 
     headers = provider_cfg.get_headers()
 
-    async with httpx.AsyncClient(timeout=30.0) as client:
+    async with httpx.AsyncClient(timeout=90.0) as client:
         resp = await client.post(
             f"{provider_cfg.base_url}/chat/completions",
             json=payload,
@@ -166,7 +166,7 @@ async def _llm_call_stream(
 
     headers = provider_cfg.get_headers()
 
-    async with httpx.AsyncClient(timeout=60.0) as client:
+    async with httpx.AsyncClient(timeout=120.0) as client:
         async with client.stream(
             "POST",
             f"{provider_cfg.base_url}/chat/completions",
@@ -214,7 +214,7 @@ async def _generate_subtasks(
             {"role": "system", "content": "You are a precise project manager."},
             {"role": "user", "content": prompt},
         ],
-        max_tokens=1024,
+        max_tokens=4096,
         temperature=0.3,
     )
 
@@ -270,36 +270,36 @@ async def _execute_single_task(
     t0 = time.perf_counter()
 
     try:
-        # Phase 1: Web Search (if enabled)
-        search_results_data = []
-        worker_input = task.query
-        
-        if search_engine is not None:
-            # Check cache first
-            cached = search_cache.get(task.query) if search_cache else None
-            if cached is not None:
-                search_results = cached
-            else:
-                search_results = await search_engine.search(task.query)
-                if search_cache:
-                    search_cache.put(task.query, search_results)
-            
-            # Format context
-            context_prompt = build_search_context(search_results)
-            worker_input = f"{context_prompt}\n\nORIGINAL USER QUERY / CONTENT:\n{main_query}\n\nYOUR SPECIFIC SUB-TASK:\n{task.query}"
-            
-            # Save raw sources for UI
-            search_results_data = [
-                {"title": r.title, "url": r.url, "domain": r.source}
-                for r in search_results
-            ]
-        
-        else:
-            # If no search, just supply the original context
-            worker_input = f"ORIGINAL USER QUERY / CONTENT:\n{main_query}\n\nYOUR SPECIFIC SUB-TASK:\n{task.query}"
-
-        # Phase 2: LLM Call
         async with semaphore:
+            # Phase 1: Web Search (if enabled)
+            search_results_data = []
+            worker_input = task.query
+            
+            if search_engine is not None:
+                # Check cache first
+                cached = search_cache.get(task.query) if search_cache else None
+                if cached is not None:
+                    search_results = cached
+                else:
+                    search_results = await search_engine.search(task.query)
+                    if search_cache:
+                        search_cache.put(task.query, search_results)
+                
+                # Format context
+                context_prompt = build_search_context(search_results)
+                worker_input = f"{context_prompt}\n\nORIGINAL USER QUERY / CONTENT:\n{main_query}\n\nYOUR SPECIFIC SUB-TASK:\n{task.query}"
+                
+                # Save raw sources for UI
+                search_results_data = [
+                    {"title": r.title, "url": r.url, "domain": r.source}
+                    for r in search_results
+                ]
+            
+            else:
+                # If no search, just supply the original context
+                worker_input = f"ORIGINAL USER QUERY / CONTENT:\n{main_query}\n\nYOUR SPECIFIC SUB-TASK:\n{task.query}"
+
+            # Phase 2: LLM Call
             body = await _llm_call(
                 provider_cfg,
                 messages=[
