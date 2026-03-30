@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Liquid Swarm — Cognitive Supernova</title>
-    <meta name="description" content="Massively parallel AI agent orchestration in real-time">
+    <meta name="description" content="Massively parallel AI agent orchestration in real-time. Open source by MiMi Tech Ai.">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;900&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
     <style>
@@ -59,45 +59,19 @@
             z-index: 0;
         }
 
-        /* ── Animated Background Particles ──────────────────── */
-        .particles {
-            position: fixed;
-            inset: 0;
-            pointer-events: none;
-            z-index: 0;
-            overflow: hidden;
-        }
-
-        .particle {
-            position: absolute;
-            width: 2px;
-            height: 2px;
-            background: var(--accent);
-            border-radius: 50%;
-            opacity: 0;
-            animation: float-particle 8s infinite ease-in-out;
-        }
-
-        @keyframes float-particle {
-            0%, 100% { opacity: 0; transform: translateY(100vh) scale(0); }
-            10% { opacity: 0.6; }
-            90% { opacity: 0.2; }
-            50% { transform: translateY(-10vh) scale(1); }
-        }
-
         /* ── Layout ────────────────────────────────────────── */
         .app {
             position: relative;
             z-index: 1;
             max-width: 1200px;
             margin: 0 auto;
-            padding: 2rem 1.5rem;
+            padding: 2rem 1.5rem 1rem;
         }
 
         /* ── Header ────────────────────────────────────────── */
         .header {
             text-align: center;
-            margin-bottom: 2.5rem;
+            margin-bottom: 2rem;
         }
 
         .header__badge {
@@ -113,7 +87,7 @@
             color: var(--accent-bright);
             text-transform: uppercase;
             letter-spacing: 1.5px;
-            margin-bottom: 1.2rem;
+            margin-bottom: 1rem;
         }
 
         .header__badge::before {
@@ -145,8 +119,38 @@
             color: var(--text-secondary);
             font-size: 1rem;
             font-weight: 400;
-            margin-top: 0.6rem;
-            line-height: 1.5;
+            margin-top: 0.5rem;
+        }
+
+        /* ── Swarm Visualization ──────────────────────────── */
+        .swarm-viz {
+            position: relative;
+            width: 100%;
+            height: 220px;
+            margin-bottom: 2rem;
+            border-radius: var(--radius-lg);
+            overflow: hidden;
+            background: rgba(5, 6, 15, 0.5);
+            border: 1px solid var(--border);
+        }
+
+        .swarm-viz canvas {
+            display: block;
+            width: 100%;
+            height: 100%;
+        }
+
+        .swarm-viz__label {
+            position: absolute;
+            bottom: 12px;
+            left: 50%;
+            transform: translateX(-50%);
+            font-family: var(--font-mono);
+            font-size: 0.7rem;
+            color: var(--text-muted);
+            letter-spacing: 1px;
+            text-transform: uppercase;
+            pointer-events: none;
         }
 
         /* ── Input Panel ───────────────────────────────────── */
@@ -165,19 +169,36 @@
             border-color: var(--border-active);
         }
 
-        .input-panel__row {
+        .presets {
             display: flex;
-            gap: 1rem;
+            gap: 0.5rem;
+            flex-wrap: wrap;
             margin-bottom: 1rem;
         }
 
-        .input-panel__query {
-            flex: 1;
+        .preset-chip {
+            padding: 0.35rem 0.8rem;
+            background: rgba(99, 102, 241, 0.06);
+            border: 1px solid var(--border);
+            border-radius: 50px;
+            font-size: 0.75rem;
+            color: var(--text-secondary);
+            cursor: pointer;
+            transition: all 0.2s;
+            font-family: var(--font-sans);
         }
+
+        .preset-chip:hover {
+            background: rgba(99, 102, 241, 0.12);
+            border-color: var(--border-active);
+            color: var(--accent-bright);
+        }
+
+        .input-panel__row { margin-bottom: 1rem; }
 
         .input-panel__query textarea {
             width: 100%;
-            min-height: 80px;
+            min-height: 72px;
             padding: 1rem 1.2rem;
             background: rgba(5, 6, 15, 0.6);
             border: 1px solid var(--border);
@@ -195,9 +216,28 @@
             box-shadow: 0 0 0 3px var(--accent-glow);
         }
 
-        .input-panel__query textarea::placeholder {
-            color: var(--text-muted);
+        .input-panel__query textarea::placeholder { color: var(--text-muted); }
+
+        .input-panel__query textarea.invalid {
+            border-color: var(--error);
+            box-shadow: 0 0 0 3px rgba(248, 113, 113, 0.2);
+            animation: shake 0.4s ease;
         }
+
+        @keyframes shake {
+            0%, 100% { transform: translateX(0); }
+            25% { transform: translateX(-6px); }
+            75% { transform: translateX(6px); }
+        }
+
+        .validation-msg {
+            display: none;
+            margin-top: 0.4rem;
+            font-size: 0.78rem;
+            color: var(--error);
+        }
+
+        .validation-msg.visible { display: block; }
 
         .input-panel__controls {
             display: flex;
@@ -235,15 +275,10 @@
         }
 
         .control-group select:focus,
-        .control-group input[type="number"]:focus {
-            border-color: var(--accent);
-        }
+        .control-group input[type="number"]:focus { border-color: var(--accent); }
+        .control-group select option { background: var(--bg-surface); }
 
-        .control-group select option {
-            background: var(--bg-surface);
-        }
-
-        /* ── Ignite Button ─────────────────────────────────── */
+        /* ── Buttons ──────────────────────────────────────── */
         .btn-ignite {
             position: relative;
             padding: 0.7rem 2rem;
@@ -267,14 +302,8 @@
             box-shadow: 0 8px 25px rgba(99, 102, 241, 0.4);
         }
 
-        .btn-ignite:active:not(:disabled) {
-            transform: translateY(0);
-        }
-
-        .btn-ignite:disabled {
-            opacity: 0.5;
-            cursor: not-allowed;
-        }
+        .btn-ignite:active:not(:disabled) { transform: translateY(0); }
+        .btn-ignite:disabled { opacity: 0.5; cursor: not-allowed; }
 
         .btn-ignite::after {
             content: '';
@@ -282,15 +311,28 @@
             inset: 0;
             background: linear-gradient(90deg, transparent, rgba(255,255,255,0.15), transparent);
             transform: translateX(-100%);
-            animation: none;
         }
 
-        .btn-ignite.loading::after {
-            animation: shimmer 1.5s infinite;
+        .btn-ignite.loading::after { animation: shimmer 1.5s infinite; }
+        @keyframes shimmer { to { transform: translateX(100%); } }
+
+        .btn-clear {
+            padding: 0.7rem 1.2rem;
+            background: transparent;
+            border: 1px solid var(--border);
+            border-radius: var(--radius-sm);
+            color: var(--text-secondary);
+            font-family: var(--font-sans);
+            font-size: 0.82rem;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.2s;
         }
 
-        @keyframes shimmer {
-            to { transform: translateX(100%); }
+        .btn-clear:hover {
+            border-color: var(--error);
+            color: var(--error);
+            background: rgba(248, 113, 113, 0.06);
         }
 
         /* ── Status Bar ────────────────────────────────────── */
@@ -344,7 +386,7 @@
 
         .status-bar__progress {
             flex: 1;
-            min-width: 150px;
+            min-width: 120px;
             height: 4px;
             background: rgba(99, 102, 241, 0.1);
             border-radius: 2px;
@@ -379,29 +421,16 @@
             animation: card-in 0.5s forwards;
         }
 
-        .worker-card.success {
-            border-color: rgba(52, 211, 153, 0.25);
-            background: rgba(52, 211, 153, 0.03);
-        }
+        .worker-card.success { border-color: rgba(52, 211, 153, 0.25); background: rgba(52, 211, 153, 0.03); }
+        .worker-card.error, .worker-card.timeout { border-color: rgba(248, 113, 113, 0.25); background: rgba(248, 113, 113, 0.03); }
 
-        .worker-card.error, .worker-card.timeout {
-            border-color: rgba(248, 113, 113, 0.25);
-            background: rgba(248, 113, 113, 0.03);
-        }
-
-        .worker-card.pending {
-            border-color: var(--border);
-        }
-
-        @keyframes card-in {
-            to { opacity: 1; transform: translateY(0) scale(1); }
-        }
+        @keyframes card-in { to { opacity: 1; transform: translateY(0) scale(1); } }
 
         .worker-card__header {
             display: flex;
             justify-content: space-between;
             align-items: center;
-            margin-bottom: 0.8rem;
+            margin-bottom: 0.6rem;
         }
 
         .worker-card__id {
@@ -410,6 +439,29 @@
             font-weight: 600;
             color: var(--accent-bright);
         }
+
+        .worker-card__actions {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .btn-copy {
+            display: none;
+            padding: 0.15rem 0.5rem;
+            background: transparent;
+            border: 1px solid var(--border);
+            border-radius: 4px;
+            color: var(--text-muted);
+            font-size: 0.65rem;
+            font-family: var(--font-mono);
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .btn-copy:hover { border-color: var(--accent); color: var(--accent-bright); }
+        .btn-copy.visible { display: inline-flex; }
+        .btn-copy.copied { color: var(--success); border-color: var(--success); }
 
         .worker-card__status {
             display: inline-flex;
@@ -423,26 +475,9 @@
             letter-spacing: 0.5px;
         }
 
-        .worker-card__status.pending {
-            background: rgba(99, 102, 241, 0.15);
-            color: var(--accent-bright);
-        }
-
-        .worker-card__status.working {
-            background: rgba(251, 191, 36, 0.15);
-            color: var(--warning);
-        }
-
-        .worker-card__status.success {
-            background: rgba(52, 211, 153, 0.15);
-            color: var(--success);
-        }
-
-        .worker-card__status.error,
-        .worker-card__status.timeout {
-            background: rgba(248, 113, 113, 0.15);
-            color: var(--error);
-        }
+        .worker-card__status.working { background: rgba(251, 191, 36, 0.15); color: var(--warning); }
+        .worker-card__status.success { background: rgba(52, 211, 153, 0.15); color: var(--success); }
+        .worker-card__status.error, .worker-card__status.timeout { background: rgba(248, 113, 113, 0.15); color: var(--error); }
 
         .worker-card__status .dot {
             width: 5px;
@@ -451,17 +486,16 @@
             background: currentColor;
         }
 
-        .worker-card__status.working .dot {
-            animation: pulse-dot 1s infinite;
-        }
+        .worker-card__status.working .dot { animation: pulse-dot 1s infinite; }
 
         .worker-card__query {
             font-size: 0.82rem;
             color: var(--text-secondary);
             line-height: 1.4;
-            margin-bottom: 0.8rem;
+            margin-bottom: 0.6rem;
             display: -webkit-box;
             -webkit-line-clamp: 2;
+            line-clamp: 2;
             -webkit-box-orient: vertical;
             overflow: hidden;
         }
@@ -470,13 +504,22 @@
             display: none;
             font-size: 0.85rem;
             color: var(--text-primary);
-            line-height: 1.55;
+            line-height: 1.6;
             padding-top: 0.8rem;
             border-top: 1px solid var(--border);
             animation: fade-in 0.4s ease;
         }
 
         .worker-card__result.visible { display: block; }
+
+        /* Markdown inside results */
+        .worker-card__result strong { color: var(--accent-bright); font-weight: 600; }
+        .worker-card__result em { color: var(--text-secondary); font-style: italic; }
+        .worker-card__result ul, .worker-card__result ol { margin: 0.3rem 0; padding-left: 1.2rem; }
+        .worker-card__result li { margin-bottom: 0.15rem; }
+        .worker-card__result h1, .worker-card__result h2, .worker-card__result h3 {
+            font-size: 0.9rem; font-weight: 700; color: var(--accent-bright); margin: 0.5rem 0 0.2rem;
+        }
 
         @keyframes fade-in {
             from { opacity: 0; transform: translateY(5px); }
@@ -493,12 +536,7 @@
         }
 
         .worker-card__meta.visible { display: flex; flex-wrap: wrap; }
-
-        .worker-card__meta span {
-            display: flex;
-            align-items: center;
-            gap: 0.25rem;
-        }
+        .worker-card__meta span { display: flex; align-items: center; gap: 0.25rem; }
 
         /* ── Summary Panel ─────────────────────────────────── */
         .summary {
@@ -509,22 +547,44 @@
             padding: 2rem;
             backdrop-filter: blur(20px);
             animation: card-in 0.6s forwards;
+            margin-bottom: 2rem;
         }
 
         .summary.visible { display: block; }
 
+        .summary__header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 1.2rem;
+        }
+
         .summary h2 {
             font-size: 1.3rem;
             font-weight: 700;
-            margin-bottom: 1.2rem;
             background: linear-gradient(135deg, var(--success), #6ee7b7);
             -webkit-background-clip: text;
             -webkit-text-fill-color: transparent;
+            background-clip: text;
         }
+
+        .btn-export {
+            padding: 0.4rem 1rem;
+            background: rgba(52, 211, 153, 0.1);
+            border: 1px solid rgba(52, 211, 153, 0.3);
+            border-radius: var(--radius-sm);
+            color: var(--success);
+            font-size: 0.75rem;
+            font-family: var(--font-mono);
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .btn-export:hover { background: rgba(52, 211, 153, 0.2); }
 
         .summary__grid {
             display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+            grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
             gap: 1rem;
         }
 
@@ -538,7 +598,7 @@
 
         .summary__stat-value {
             font-family: var(--font-mono);
-            font-size: 1.6rem;
+            font-size: 1.5rem;
             font-weight: 700;
             color: var(--text-primary);
         }
@@ -551,63 +611,55 @@
             margin-top: 0.3rem;
         }
 
-        .summary__stat-value.cost {
-            color: var(--success);
+        .summary__stat-value.cost { color: var(--success); }
+        .summary__stat-value.time { color: var(--accent-bright); }
+
+        /* ── Footer ────────────────────────────────────────── */
+        .footer {
+            text-align: center;
+            padding: 1.5rem 0 1rem;
+            border-top: 1px solid var(--border);
+            margin-top: 1rem;
         }
 
-        .summary__stat-value.time {
-            color: var(--accent-bright);
+        .footer__text {
+            font-size: 0.72rem;
+            color: var(--text-muted);
+            line-height: 1.6;
         }
+
+        .footer a {
+            color: var(--text-secondary);
+            text-decoration: none;
+            transition: color 0.2s;
+        }
+
+        .footer a:hover { color: var(--accent-bright); }
 
         /* ── Responsive ────────────────────────────────────── */
         @media (max-width: 768px) {
             .header h1 { font-size: 2rem; }
-            .input-panel__controls { flex-direction: column; }
+            .input-panel__controls { flex-direction: column; align-items: stretch; }
             .workers-grid { grid-template-columns: 1fr; }
             .summary__grid { grid-template-columns: repeat(2, 1fr); }
-        }
-
-        /* ── Presets Section ───────────────────────────────── */
-        .presets {
-            display: flex;
-            gap: 0.5rem;
-            flex-wrap: wrap;
-            margin-bottom: 1rem;
-        }
-
-        .preset-chip {
-            padding: 0.35rem 0.8rem;
-            background: rgba(99, 102, 241, 0.06);
-            border: 1px solid var(--border);
-            border-radius: 50px;
-            font-size: 0.75rem;
-            color: var(--text-secondary);
-            cursor: pointer;
-            transition: all 0.2s;
-        }
-
-        .preset-chip:hover {
-            background: rgba(99, 102, 241, 0.12);
-            border-color: var(--border-active);
-            color: var(--accent-bright);
+            .swarm-viz { height: 160px; }
         }
     </style>
 </head>
 <body>
-    <!-- Background Particles -->
-    <div class="particles" id="particles"></div>
-
     <div class="app">
         <!-- Header -->
         <header class="header">
-            <div class="header__badge">
-                <span>NVIDIA NIM Powered</span>
-            </div>
+            <div class="header__badge"><span>NVIDIA NIM Powered</span></div>
             <h1>Liquid Swarm</h1>
-            <p class="header__sub">
-                Cognitive Supernova — Massively parallel AI analysis in real-time
-            </p>
+            <p class="header__sub">Cognitive Supernova — Massively parallel AI analysis in real-time</p>
         </header>
+
+        <!-- Swarm Network Visualization -->
+        <div class="swarm-viz">
+            <canvas id="swarmCanvas"></canvas>
+            <div class="swarm-viz__label" id="vizLabel">idle — awaiting ignition</div>
+        </div>
 
         <!-- Input Panel -->
         <section class="input-panel">
@@ -622,12 +674,13 @@
             <div class="input-panel__row">
                 <div class="input-panel__query">
                     <textarea id="queryInput" placeholder="Describe your analysis task... e.g. 'Analyze the global AI market in 2025: size, growth, top players, trends and risks'" rows="3"></textarea>
+                    <div class="validation-msg" id="validationMsg">Please describe your analysis task before igniting.</div>
                 </div>
             </div>
 
             <div class="input-panel__controls">
                 <div class="control-group">
-                    <label>Worker</label>
+                    <label>Workers</label>
                     <input type="number" id="numTasks" value="8" min="2" max="30" step="1">
                 </div>
                 <div class="control-group">
@@ -638,9 +691,8 @@
                         <option value="PREMIUM">💎 Nemotron 70B — $0.005</option>
                     </select>
                 </div>
-                <button class="btn-ignite" id="igniteBtn" onclick="igniteSwarm()">
-                    🚀 IGNITE
-                </button>
+                <button class="btn-ignite" id="igniteBtn" onclick="igniteSwarm()">🚀 IGNITE</button>
+                <button class="btn-clear" id="clearBtn" onclick="clearAll()">Clear</button>
             </div>
         </section>
 
@@ -652,6 +704,9 @@
             </div>
             <div class="status-bar__stat">
                 Workers: <span class="value" id="completedCount">0</span>/<span class="value" id="totalCount">0</span>
+            </div>
+            <div class="status-bar__stat">
+                ⏱ <span class="value" id="elapsedTime">0.0s</span>
             </div>
             <div class="status-bar__stat">
                 Cost: <span class="value" id="runningCost">$0.0000</span>
@@ -666,7 +721,10 @@
 
         <!-- Summary Panel -->
         <div class="summary" id="summary">
-            <h2>✅ Swarm Complete</h2>
+            <div class="summary__header">
+                <h2>✅ Swarm Complete</h2>
+                <button class="btn-export" onclick="exportReport()">📄 Export Markdown</button>
+            </div>
             <div class="summary__grid">
                 <div class="summary__stat">
                     <div class="summary__stat-value time" id="sumTime">—</div>
@@ -686,43 +744,277 @@
                 </div>
             </div>
         </div>
+
+        <!-- Footer -->
+        <footer class="footer">
+            <p class="footer__text">
+                Open Source under <a href="https://www.apache.org/licenses/LICENSE-2.0" target="_blank">Apache 2.0</a>
+                · Built by <a href="https://github.com/mimitechai" target="_blank">MiMi Tech Ai UG</a>, Bad Liebenzell
+                · <a href="https://github.com/mimitechai/liquid-swarm" target="_blank">GitHub</a>
+            </p>
+        </footer>
     </div>
 
     <script>
-        // ── Particle Background ──────────────────────────────
-        (function initParticles() {
-            const container = document.getElementById('particles');
-            for (let i = 0; i < 40; i++) {
-                const p = document.createElement('div');
-                p.className = 'particle';
-                p.style.left = Math.random() * 100 + '%';
-                p.style.animationDelay = Math.random() * 8 + 's';
-                p.style.animationDuration = (6 + Math.random() * 6) + 's';
-                p.style.width = p.style.height = (1 + Math.random() * 2) + 'px';
-                container.appendChild(p);
-            }
-        })();
+        // ══════════════════════════════════════════════════════
+        // SWARM NETWORK VISUALIZATION (Canvas)
+        // ══════════════════════════════════════════════════════
+        const canvas = document.getElementById('swarmCanvas');
+        const ctx = canvas.getContext('2d');
+        let dpr = window.devicePixelRatio || 1;
+        let vizNodes = [];
+        let vizState = 'idle'; // idle | decomposing | executing | complete
+        let vizCenterNode = null;
+        let animFrame = null;
 
-        // ── Preset Chips ─────────────────────────────────────
+        function resizeCanvas() {
+            const rect = canvas.parentElement.getBoundingClientRect();
+            canvas.width = rect.width * dpr;
+            canvas.height = rect.height * dpr;
+            ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+        }
+
+        window.addEventListener('resize', resizeCanvas);
+        resizeCanvas();
+
+        function createCenterNode() {
+            const rect = canvas.parentElement.getBoundingClientRect();
+            return {
+                x: rect.width / 2,
+                y: rect.height / 2,
+                radius: 8,
+                color: '#6366f1',
+                glow: 0.5,
+                pulse: 0,
+            };
+        }
+
+        vizCenterNode = createCenterNode();
+
+        function createWorkerNodes(count) {
+            const rect = canvas.parentElement.getBoundingClientRect();
+            const cx = rect.width / 2;
+            const cy = rect.height / 2;
+            const nodes = [];
+            for (let i = 0; i < count; i++) {
+                const angle = (Math.PI * 2 / count) * i - Math.PI / 2;
+                const orbitR = Math.min(cx, cy) * 0.65;
+                nodes.push({
+                    id: i,
+                    x: cx,
+                    y: cy,
+                    targetX: cx + Math.cos(angle) * orbitR,
+                    targetY: cy + Math.sin(angle) * orbitR,
+                    radius: 4,
+                    color: '#fbbf24',
+                    status: 'working',
+                    progress: 0,
+                    angle: angle,
+                    orbitR: orbitR,
+                    born: performance.now(),
+                });
+            }
+            return nodes;
+        }
+
+        function drawViz(timestamp) {
+            const rect = canvas.parentElement.getBoundingClientRect();
+            const w = rect.width;
+            const h = rect.height;
+            ctx.clearRect(0, 0, w, h);
+
+            const cx = w / 2;
+            const cy = h / 2;
+
+            // Center node pulse
+            vizCenterNode.x = cx;
+            vizCenterNode.y = cy;
+            vizCenterNode.pulse = (Math.sin(timestamp * 0.003) + 1) / 2;
+
+            const glowRadius = vizState === 'decomposing' ?
+                20 + vizCenterNode.pulse * 15 :
+                12 + vizCenterNode.pulse * 6;
+
+            // Center glow
+            const grad = ctx.createRadialGradient(cx, cy, 0, cx, cy, glowRadius);
+            const baseColor = vizState === 'complete' ? '52, 211, 153' : '99, 102, 241';
+            grad.addColorStop(0, `rgba(${baseColor}, 0.6)`);
+            grad.addColorStop(0.5, `rgba(${baseColor}, 0.15)`);
+            grad.addColorStop(1, `rgba(${baseColor}, 0)`);
+            ctx.beginPath();
+            ctx.arc(cx, cy, glowRadius, 0, Math.PI * 2);
+            ctx.fillStyle = grad;
+            ctx.fill();
+
+            // Center dot
+            ctx.beginPath();
+            ctx.arc(cx, cy, vizCenterNode.radius, 0, Math.PI * 2);
+            ctx.fillStyle = vizState === 'complete' ? '#34d399' : '#818cf8';
+            ctx.fill();
+
+            // Worker nodes
+            vizNodes.forEach((node, i) => {
+                const age = (timestamp - node.born) / 1000;
+                const expandT = Math.min(age / 0.6, 1);
+                const ease = 1 - Math.pow(1 - expandT, 3);
+
+                node.x = cx + (node.targetX - cx) * ease;
+                node.y = cy + (node.targetY - cy) * ease;
+
+                // Subtle orbit drift
+                if (expandT >= 1 && node.status === 'working') {
+                    const drift = Math.sin(timestamp * 0.001 + i) * 3;
+                    node.x += drift;
+                    node.y += Math.cos(timestamp * 0.0012 + i) * 2;
+                }
+
+                // Connection line to center
+                ctx.beginPath();
+                ctx.moveTo(cx, cy);
+                ctx.lineTo(node.x, node.y);
+                const lineColor = node.status === 'success' ? 'rgba(52,211,153,' :
+                                  node.status === 'error' ? 'rgba(248,113,113,' :
+                                  'rgba(99,102,241,';
+                const lineAlpha = node.status === 'working' ?
+                    0.08 + Math.sin(timestamp * 0.005 + i * 0.5) * 0.06 : 0.15;
+                ctx.strokeStyle = lineColor + lineAlpha + ')';
+                ctx.lineWidth = 1;
+                ctx.stroke();
+
+                // Data pulse along line (working nodes only)
+                if (node.status === 'working') {
+                    const pulseT = ((timestamp * 0.002 + i * 0.4) % 1);
+                    const px = cx + (node.x - cx) * pulseT;
+                    const py = cy + (node.y - cy) * pulseT;
+                    ctx.beginPath();
+                    ctx.arc(px, py, 1.5, 0, Math.PI * 2);
+                    ctx.fillStyle = 'rgba(129, 140, 248, 0.6)';
+                    ctx.fill();
+                }
+
+                // Worker node glow
+                if (node.status === 'success') {
+                    const grd = ctx.createRadialGradient(node.x, node.y, 0, node.x, node.y, 12);
+                    grd.addColorStop(0, 'rgba(52, 211, 153, 0.3)');
+                    grd.addColorStop(1, 'rgba(52, 211, 153, 0)');
+                    ctx.beginPath();
+                    ctx.arc(node.x, node.y, 12, 0, Math.PI * 2);
+                    ctx.fillStyle = grd;
+                    ctx.fill();
+                }
+
+                // Worker dot
+                ctx.beginPath();
+                ctx.arc(node.x, node.y, node.radius, 0, Math.PI * 2);
+                ctx.fillStyle = node.status === 'success' ? '#34d399' :
+                               node.status === 'error' ? '#f87171' :
+                               '#fbbf24';
+                ctx.fill();
+            });
+
+            // Idle state: ambient particles
+            if (vizState === 'idle') {
+                for (let i = 0; i < 6; i++) {
+                    const a = timestamp * 0.0005 + i * Math.PI / 3;
+                    const r = 40 + Math.sin(timestamp * 0.001 + i) * 15;
+                    const px = cx + Math.cos(a) * r;
+                    const py = cy + Math.sin(a) * r;
+                    ctx.beginPath();
+                    ctx.arc(px, py, 1.2, 0, Math.PI * 2);
+                    ctx.fillStyle = `rgba(99, 102, 241, ${0.15 + Math.sin(timestamp * 0.003 + i) * 0.1})`;
+                    ctx.fill();
+                }
+            }
+
+            animFrame = requestAnimationFrame(drawViz);
+        }
+
+        animFrame = requestAnimationFrame(drawViz);
+
+        function vizSetState(state, workerCount) {
+            vizState = state;
+            const label = document.getElementById('vizLabel');
+            if (state === 'idle') {
+                vizNodes = [];
+                label.textContent = 'idle — awaiting ignition';
+            } else if (state === 'decomposing') {
+                vizNodes = [];
+                label.textContent = 'decomposing task...';
+            } else if (state === 'executing') {
+                vizNodes = createWorkerNodes(workerCount || 8);
+                label.textContent = `${workerCount} agents active`;
+            } else if (state === 'complete') {
+                label.textContent = 'swarm complete — all agents terminated';
+            }
+        }
+
+        function vizMarkWorker(index, status) {
+            if (vizNodes[index]) {
+                vizNodes[index].status = status;
+                vizNodes[index].radius = status === 'success' ? 5 : 4;
+            }
+        }
+
+        // ══════════════════════════════════════════════════════
+        // MARKDOWN RENDERER (lightweight, no dependencies)
+        // ══════════════════════════════════════════════════════
+        function renderMarkdown(text) {
+            if (!text) return '';
+            let html = text
+                .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+                .replace(/^### (.+)$/gm, '<h3>$1</h3>')
+                .replace(/^## (.+)$/gm, '<h2>$1</h2>')
+                .replace(/^# (.+)$/gm, '<h1>$1</h1>')
+                .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+                .replace(/\*(.+?)\*/g, '<em>$1</em>')
+                .replace(/^- (.+)$/gm, '<li>$1</li>')
+                .replace(/(<li>.*<\/li>)/gs, '<ul>$1</ul>')
+                .replace(/<\/ul>\s*<ul>/g, '')
+                .replace(/\n{2,}/g, '<br><br>')
+                .replace(/\n/g, '<br>');
+            return html;
+        }
+
+        // ══════════════════════════════════════════════════════
+        // PRESET CHIPS
+        // ══════════════════════════════════════════════════════
         document.querySelectorAll('.preset-chip').forEach(chip => {
             chip.addEventListener('click', () => {
-                document.getElementById('queryInput').value = chip.dataset.query;
-                document.getElementById('queryInput').focus();
+                const ta = document.getElementById('queryInput');
+                ta.value = chip.dataset.query;
+                ta.classList.remove('invalid');
+                document.getElementById('validationMsg').classList.remove('visible');
+                ta.focus();
             });
         });
 
-        // ── State ────────────────────────────────────────────
+        // ══════════════════════════════════════════════════════
+        // STATE
+        // ══════════════════════════════════════════════════════
         let tasks = {};
+        let allResults = [];
         let totalCost = 0;
         let successCount = 0;
+        let timerInterval = null;
+        let startTime = null;
 
-        // ── Main: Ignite the Swarm ───────────────────────────
+        // ══════════════════════════════════════════════════════
+        // MAIN: IGNITE THE SWARM
+        // ══════════════════════════════════════════════════════
         async function igniteSwarm() {
-            const query = document.getElementById('queryInput').value.trim();
+            const ta = document.getElementById('queryInput');
+            const query = ta.value.trim();
+
+            // Input validation
             if (!query) {
-                document.getElementById('queryInput').focus();
+                ta.classList.add('invalid');
+                document.getElementById('validationMsg').classList.add('visible');
+                ta.focus();
+                setTimeout(() => ta.classList.remove('invalid'), 600);
                 return;
             }
+            ta.classList.remove('invalid');
+            document.getElementById('validationMsg').classList.remove('visible');
 
             const numTasks = parseInt(document.getElementById('numTasks').value);
             const modelTier = document.getElementById('modelTier').value;
@@ -740,19 +1032,27 @@
             document.getElementById('totalCount').textContent = '?';
             document.getElementById('runningCost').textContent = '$0.0000';
             document.getElementById('progressFill').style.width = '0%';
+            document.getElementById('spinner').style.display = '';
             tasks = {};
+            allResults = [];
             totalCost = 0;
             successCount = 0;
+
+            // Start timer
+            startTime = performance.now();
+            if (timerInterval) clearInterval(timerInterval);
+            timerInterval = setInterval(() => {
+                const elapsed = ((performance.now() - startTime) / 1000).toFixed(1);
+                document.getElementById('elapsedTime').textContent = elapsed + 's';
+            }, 100);
+
+            vizSetState('decomposing');
 
             try {
                 const response = await fetch('/api/ignite', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        query: query,
-                        num_tasks: numTasks,
-                        model_tier: modelTier,
-                    }),
+                    body: JSON.stringify({ query, num_tasks: numTasks, model_tier: modelTier }),
                 });
 
                 const reader = response.body.getReader();
@@ -762,12 +1062,10 @@
                 while (true) {
                     const { done, value } = await reader.read();
                     if (done) break;
-
                     buffer += decoder.decode(value, { stream: true });
 
-                    // Parse SSE events
                     const lines = buffer.split('\n');
-                    buffer = lines.pop(); // Keep incomplete line
+                    buffer = lines.pop();
 
                     let eventType = '';
                     for (const line of lines) {
@@ -786,30 +1084,30 @@
                 btn.disabled = false;
                 btn.classList.remove('loading');
                 btn.textContent = '🚀 IGNITE';
+                if (timerInterval) clearInterval(timerInterval);
             }
         }
 
-        // ── Event Handlers ───────────────────────────────────
+        // ══════════════════════════════════════════════════════
+        // EVENT HANDLERS
+        // ══════════════════════════════════════════════════════
         function handleEvent(type, data) {
             switch (type) {
                 case 'phase':
                     document.getElementById('phaseText').textContent = data.message;
                     break;
-
                 case 'tasks':
                     handleTasksList(data);
                     break;
-
                 case 'result':
                     handleWorkerResult(data);
                     break;
-
                 case 'complete':
                     handleComplete(data);
                     break;
-
                 case 'error':
                     document.getElementById('phaseText').textContent = `❌ ${data.message}`;
+                    vizSetState('idle');
                     break;
             }
         }
@@ -818,20 +1116,23 @@
             const grid = document.getElementById('workersGrid');
             document.getElementById('totalCount').textContent = data.tasks.length;
 
-            data.tasks.forEach((task, i) => {
-                tasks[task.id] = task;
+            vizSetState('executing', data.tasks.length);
 
+            data.tasks.forEach((task, i) => {
+                tasks[task.id] = { ...task, index: i };
                 const card = document.createElement('div');
-                card.className = 'worker-card pending';
+                card.className = 'worker-card';
                 card.id = `card-${task.id}`;
-                card.style.animationDelay = `${i * 60}ms`;
+                card.style.animationDelay = `${i * 50}ms`;
                 card.innerHTML = `
                     <div class="worker-card__header">
                         <span class="worker-card__id">${task.id}</span>
-                        <span class="worker-card__status working">
-                            <span class="dot"></span>
-                            Working
-                        </span>
+                        <div class="worker-card__actions">
+                            <button class="btn-copy" id="copy-${task.id}" onclick="copyResult('${task.id}')">Copy</button>
+                            <span class="worker-card__status working">
+                                <span class="dot"></span>Working
+                            </span>
+                        </div>
                     </div>
                     <div class="worker-card__query">${escapeHtml(task.query)}</div>
                     <div class="worker-card__result" id="result-${task.id}"></div>
@@ -839,13 +1140,20 @@
                 `;
                 grid.appendChild(card);
             });
+
+            // Auto-scroll to first card
+            setTimeout(() => {
+                grid.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            }, 300);
         }
 
         function handleWorkerResult(data) {
             const card = document.getElementById(`card-${data.task_id}`);
             if (!card) return;
 
-            // Update status
+            allResults.push(data);
+
+            // Update card status
             card.className = `worker-card ${data.status}`;
             const statusEl = card.querySelector('.worker-card__status');
             const statusLabels = {
@@ -856,11 +1164,14 @@
             statusEl.className = `worker-card__status ${data.status}`;
             statusEl.innerHTML = `<span class="dot"></span>${statusLabels[data.status] || data.status}`;
 
-            // Show result
+            // Show result with markdown rendering
             const resultEl = document.getElementById(`result-${data.task_id}`);
             if (data.status === 'success') {
-                resultEl.textContent = data.data.result || '';
+                resultEl.innerHTML = renderMarkdown(data.data.result || '');
                 successCount++;
+                // Show copy button
+                const copyBtn = document.getElementById(`copy-${data.task_id}`);
+                if (copyBtn) copyBtn.classList.add('visible');
             } else {
                 resultEl.textContent = data.data.error || 'Unknown error';
                 resultEl.style.color = 'var(--error)';
@@ -883,14 +1194,20 @@
             totalCost += data.cost_usd;
             document.getElementById('completedCount').textContent = data.completed;
             document.getElementById('runningCost').textContent = `$${totalCost.toFixed(4)}`;
-
             const pct = (data.completed / data.total) * 100;
             document.getElementById('progressFill').style.width = pct + '%';
+
+            // Update viz
+            const taskMeta = tasks[data.task_id];
+            if (taskMeta) vizMarkWorker(taskMeta.index, data.status);
         }
 
         function handleComplete(data) {
+            if (timerInterval) clearInterval(timerInterval);
+
             document.getElementById('phaseText').textContent = '✅ Swarm complete';
             document.getElementById('spinner').style.display = 'none';
+            document.getElementById('elapsedTime').textContent = data.total_time + 's';
 
             const summary = document.getElementById('summary');
             document.getElementById('sumTime').textContent = data.total_time + 's';
@@ -898,22 +1215,92 @@
             document.getElementById('sumWorkers').textContent = data.total_tasks;
             document.getElementById('sumRate').textContent =
                 Math.round((successCount / data.total_tasks) * 100) + '%';
-
             summary.classList.add('visible');
+
+            vizSetState('complete');
+
+            // Scroll to summary
+            setTimeout(() => {
+                summary.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            }, 600);
         }
 
+        // ══════════════════════════════════════════════════════
+        // UTILITY FUNCTIONS
+        // ══════════════════════════════════════════════════════
         function escapeHtml(text) {
             const div = document.createElement('div');
             div.textContent = text;
             return div.innerHTML;
         }
 
-        // ── Enter key to ignite ──────────────────────────────
+        function clearAll() {
+            document.getElementById('queryInput').value = '';
+            document.getElementById('workersGrid').innerHTML = '';
+            document.getElementById('summary').classList.remove('visible');
+            document.getElementById('statusBar').classList.remove('visible');
+            document.getElementById('validationMsg').classList.remove('visible');
+            document.getElementById('queryInput').classList.remove('invalid');
+            tasks = {};
+            allResults = [];
+            totalCost = 0;
+            successCount = 0;
+            vizSetState('idle');
+            if (timerInterval) clearInterval(timerInterval);
+        }
+
+        function copyResult(taskId) {
+            const el = document.getElementById(`result-${taskId}`);
+            if (!el) return;
+            const text = el.innerText || el.textContent;
+            navigator.clipboard.writeText(text).then(() => {
+                const btn = document.getElementById(`copy-${taskId}`);
+                btn.textContent = '✓ Copied';
+                btn.classList.add('copied');
+                setTimeout(() => {
+                    btn.textContent = 'Copy';
+                    btn.classList.remove('copied');
+                }, 1500);
+            });
+        }
+
+        function exportReport() {
+            let md = `# Liquid Swarm Analysis Report\n\n`;
+            md += `**Generated:** ${new Date().toISOString()}\n`;
+            md += `**Query:** ${document.getElementById('queryInput').value}\n`;
+            md += `**Workers:** ${allResults.length} | **Cost:** $${totalCost.toFixed(4)}\n\n---\n\n`;
+
+            allResults.forEach((r, i) => {
+                const taskInfo = tasks[r.task_id];
+                md += `## Worker ${i + 1}: ${taskInfo?.query || r.task_id}\n\n`;
+                md += `**Status:** ${r.status}`;
+                if (r.data.latency_seconds) md += ` | **Latency:** ${r.data.latency_seconds}s`;
+                if (r.cost_usd) md += ` | **Cost:** $${r.cost_usd.toFixed(4)}`;
+                md += `\n\n`;
+                md += (r.data.result || r.data.error || 'No output') + '\n\n---\n\n';
+            });
+
+            const blob = new Blob([md], { type: 'text/markdown' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `liquid-swarm-report-${Date.now()}.md`;
+            a.click();
+            URL.revokeObjectURL(url);
+        }
+
+        // Enter key to ignite
         document.getElementById('queryInput').addEventListener('keydown', (e) => {
             if (e.key === 'Enter' && !e.shiftKey) {
                 e.preventDefault();
                 igniteSwarm();
             }
+        });
+
+        // Remove validation on input
+        document.getElementById('queryInput').addEventListener('input', () => {
+            document.getElementById('queryInput').classList.remove('invalid');
+            document.getElementById('validationMsg').classList.remove('visible');
         });
     </script>
 </body>
