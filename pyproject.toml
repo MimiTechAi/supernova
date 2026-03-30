@@ -1,0 +1,52 @@
+[project]
+name = "liquid-swarm"
+version = "0.1.0"
+description = "Liquid Swarm Architecture — Massively parallel AI agent orchestration via LangGraph"
+requires-python = ">=3.12"
+license = "Apache-2.0"
+authors = [
+    {name = "MiMi Tech Ai UG", email = "hello@mimitech.ai"},
+]
+readme = "README.md"
+keywords = ["ai", "agents", "langgraph", "swarm", "parallel", "nvidia-nim", "llm"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+
+[project.urls]
+Homepage = "https://github.com/mimitechai/liquid-swarm"
+Repository = "https://github.com/mimitechai/liquid-swarm"
+Issues = "https://github.com/mimitechai/liquid-swarm/issues"
+
+dependencies = [
+    "langgraph>=0.4",
+    "langchain-core>=0.3",
+    "pydantic>=2.0",
+    "httpx>=0.27",
+    "python-dotenv>=1.0",
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.32",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.24",
+    "pytest-bdd>=8.0",
+    "pytest-cov>=6.0",
+]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+
+[tool.coverage.run]
+source = ["liquid_swarm"]
+
+[tool.coverage.report]
+fail_under = 90
+show_missing = true
