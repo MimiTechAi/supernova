@@ -19,7 +19,7 @@ from pathlib import Path
 from typing import AsyncGenerator
 
 import httpx
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -861,6 +861,209 @@ async def metrics():
         f"supernova_weekly_cost_usd {ledger['weekly_cost_usd']}",
     ]
     return PlainTextResponse("\n".join(lines) + "\n", media_type="text/plain")
+
+
+# ── WebSocket — unified real-time channel ────────────────────────────────────
+
+@app.websocket("/ws/swarm")
+async def ws_swarm(websocket: WebSocket):
+    """WebSocket endpoint — single persistent channel for ignite + approve flow.
+
+    Messages received (JSON):
+      { "type": "ignite", "query": "...", "num_tasks": 5, ... }
+      { "type": "approve", "thread_id": "...", "model": "..." }
+
+    Messages sent (JSON):
+      { "event": "<phase|tasks|result|paused|synthesis_token|...>", "data": {...} }
+    """
+    await websocket.accept()
+
+    async def ws_send(event: str, data: dict) -> None:
+        await websocket.send_text(json.dumps({"event": event, "data": data}, ensure_ascii=False))
+
+    try:
+        while True:
+            raw = await websocket.receive_text()
+            msg = json.loads(raw)
+            msg_type = msg.get("type")
+
+            if msg_type == "ignite":
+                main_query = msg.get("query", "")
+                num_tasks = min(max(int(msg.get("num_tasks", 5)), 1), 250)
+                model_id = msg.get("model", "")
+                provider_str = msg.get("provider", "")
+                system_prompt_id = msg.get("system_prompt", "market_analyst")
+                custom_prompt = msg.get("custom_prompt", "")
+                cost_budget = msg.get("cost_budget", None)
+                web_search_enabled = msg.get("web_search_enabled", True)
+
+                provider_cfg = _build_provider_config(model_id, provider_str)
+                if system_prompt_id == "custom" and custom_prompt:
+                    system_prompt = custom_prompt
+                elif system_prompt_id in PROMPT_PRESETS:
+                    system_prompt = PROMPT_PRESETS[system_prompt_id]["prompt"]
+                else:
+                    system_prompt = PROMPT_PRESETS["market_analyst"]["prompt"]
+
+                cost_per_call = provider_cfg.get_model_cost(provider_cfg.default_model)
+
+                # Cost estimate
+                estimated_cost = cost_per_call * (num_tasks + 2)
+                await ws_send("cost_estimate", {
+                    "estimated_cost": round(estimated_cost, 6),
+                    "cost_per_worker": cost_per_call,
+                    "budget": cost_budget,
+                })
+
+                # Phase 1: Decompose
+                await ws_send("phase", {"phase": "decomposing", "message": "Decomposing task into sub-tasks..."})
+                try:
+                    subtasks = await _generate_subtasks(main_query, num_tasks, provider_cfg, system_prompt)
+                except Exception as e:
+                    await ws_send("error", {"message": f"Decomposition failed: {e}"})
+                    continue
+
+                tasks_list = [
+                    TaskInput(task_id=f"worker-{i:03d}", query=q)
+                    for i, q in enumerate(subtasks)
+                ]
+                await ws_send("tasks", {
+                    "tasks": [{"id": t.task_id, "query": t.query} for t in tasks_list],
+                    "model": provider_cfg.default_model,
+                    "provider": provider_cfg.provider.value,
+                    "cost_per_call": cost_per_call,
+                })
+
+                # Phase 2: Execute via LangGraph
+                await ws_send("phase", {"phase": "executing", "message": f"Igniting {len(tasks_list)} workers via LangGraph..."})
+
+                thread_id = f"run-{int(time.time())}"
+                run_config = RunnableConfig(configurable={"thread_id": thread_id})
+                state_input = {
+                    "tasks": tasks_list,
+                    "current_task": None,
+                    "results": [],
+                    "final_results": [],
+                    "flagged_results": [],
+                    "global_context": None,
+                    "strategy_plan": None,
+                }
+
+                completed = 0
+                completed_ids: set[str] = set()
+
+                async with get_memory_saver() as memory:
+                    swarm_graph = build_swarm_graph(checkpointer=memory)
+                    async for event in swarm_graph.astream(state_input, config=run_config, stream_mode="updates"):
+                        if "worker_node" in event:
+                            for res in event["worker_node"].get("results", []):
+                                if res.task_id not in completed_ids:
+                                    completed_ids.add(res.task_id)
+                                    completed += 1
+                                    await ws_send("result", {
+                                        "task_id": res.task_id,
+                                        "status": res.status,
+                                        "data": {
+                                            "result": res.data.get("result", ""),
+                                            "confidence": res.data.get("confidence", ""),
+                                            "latency_seconds": res.data.get("latency_seconds", 0),
+                                            "model": res.data.get("model", ""),
+                                        },
+                                        "cost_usd": res.cost_usd,
+                                        "completed": completed,
+                                        "total": len(tasks_list),
+                                    })
+
+                await ws_send("paused", {
+                    "thread_id": thread_id,
+                    "message": "Workers completed. Awaiting Human-in-the-Loop review.",
+                })
+
+            elif msg_type == "approve":
+                thread_id = msg.get("thread_id", "")
+                model_id = msg.get("model", "")
+                provider_cfg = _build_provider_config(model_id, "")
+                cost_per_call = provider_cfg.get_model_cost(provider_cfg.default_model)
+                run_config = RunnableConfig(configurable={"thread_id": thread_id})
+
+                await ws_send("phase", {"phase": "synthesizing", "message": "Human approved. Proceeding to Reducer & Synthesis..."})
+
+                async with get_memory_saver() as memory:
+                    swarm_graph = build_swarm_graph(checkpointer=memory)
+                    async for _ in swarm_graph.astream(None, config=run_config, stream_mode="updates"):
+                        pass
+                    final_state = (await swarm_graph.aget_state(run_config)).values
+                    all_results = final_state.get("final_results", []) + final_state.get("flagged_results", [])
+
+                total_cost = sum(r.cost_usd for r in all_results)
+                synthesis_text = ""
+                try:
+                    successful = [
+                        r for r in all_results
+                        if r.status == "success" and r.data.get("result") and r.data.get("result") != "INSUFFICIENT DATA"
+                    ]
+                    if not successful:
+                        synthesis_text = "No successful worker results available for synthesis."
+                        await ws_send("synthesis", {"summary": synthesis_text, "cost_usd": 0.0})
+                    else:
+                        findings = [f"Finding {i}: {r.data['result']}" for i, r in enumerate(successful, 1)]
+                        synth_prompt = (
+                            "You are a senior analyst. Synthesize these parallel findings into a concise executive summary.\n\n"
+                            "Requirements: Start with a one-sentence headline. Combine and deduplicate insights. "
+                            "Keep it under 200 words. Use structured formatting.\n\n"
+                            f"--- DATA ---\n\n{chr(10).join(findings)}\n\n--- END DATA ---\n\nExecutive Summary:"
+                        )
+                        messages = [
+                            {"role": "system", "content": "You are a senior analyst creating executive summaries."},
+                            {"role": "user", "content": synth_prompt},
+                        ]
+                        async for token in _llm_call_stream(provider_cfg, messages):
+                            synthesis_text += token
+                            await ws_send("synthesis_token", {"token": token})
+                        total_cost += cost_per_call
+                        await ws_send("synthesis_complete", {"summary": synthesis_text, "cost_usd": cost_per_call})
+                except Exception as e:
+                    synthesis_text = f"Synthesis unavailable: {e}"
+                    await ws_send("synthesis", {"summary": synthesis_text, "cost_usd": 0.0})
+
+                success_count = sum(1 for r in all_results if r.status == "success")
+                run_id = None
+                try:
+                    run_id = save_run(
+                        query=thread_id,
+                        results=all_results,
+                        total_cost=total_cost,
+                        total_time=0.0,
+                        model=provider_cfg.default_model,
+                        synthesis=synthesis_text,
+                    )
+                    record_run(
+                        run_id=run_id,
+                        query=thread_id,
+                        model=provider_cfg.default_model,
+                        worker_count=len(all_results),
+                        success_count=success_count,
+                        cost_usd=total_cost,
+                        duration_sec=0.0,
+                    )
+                except Exception:
+                    pass
+
+                await ws_send("complete", {
+                    "total_time": 0.0,
+                    "total_cost": round(total_cost, 6),
+                    "total_tasks": len(all_results),
+                    "success_count": success_count,
+                    "run_id": run_id,
+                })
+
+    except WebSocketDisconnect:
+        pass
+    except Exception as e:
+        try:
+            await websocket.send_text(json.dumps({"event": "error", "data": {"message": str(e)}}))
+        except Exception:
+            pass
 
 
 if __name__ == "__main__":
