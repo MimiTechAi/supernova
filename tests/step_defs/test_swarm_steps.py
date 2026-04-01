@@ -94,12 +94,14 @@ def when_big_bang(ctx: SwarmContext):
         "results": [],
         "final_results": [],
         "flagged_results": [],
+        "global_context": None,
+        "strategy_plan": None,
     }
 
     rogue_id = ctx.rogue_task_id
     hanging_id = ctx.hanging_task_id
 
-    async def custom_execute(task, config=None):
+    async def custom_execute(task, config=None, global_context="", strategy_plan="", **kwargs):
         if rogue_id and task.task_id == rogue_id:
             await asyncio.sleep(0.1)
             return TaskResult.model_construct(
@@ -109,7 +111,7 @@ def when_big_bang(ctx: SwarmContext):
                 cost_usd=0.002,
             )
         elif hanging_id and task.task_id == hanging_id:
-            await asyncio.sleep(30)
+            await asyncio.sleep(999)  # Far exceeds WORKER_TIMEOUT_SECONDS (3s in tests)
             return TaskResult(
                 task_id=task.task_id,
                 status="success",
@@ -124,11 +126,32 @@ def when_big_bang(ctx: SwarmContext):
                 cost_usd=0.002,
             )
 
-    async def run():
-        with patch("liquid_swarm.nodes.execute_task", side_effect=custom_execute):
-            return await ctx.graph.ainvoke(state)
+    async def bootstrap_mock(s):
+        return {"global_context": "Mock global context for tests."}
 
-    ctx.result = asyncio.get_event_loop().run_until_complete(run())
+    async def thinker_mock(s):
+        return {"strategy_plan": "Mock strategy: execute all tasks with maximum precision."}
+
+    # Apply patches SYNCHRONOUSLY before entering the event loop so they
+    # remain active for the entire async execution (asyncio.run creates a
+    # fresh loop, patch context is thread-local so it survives the switch).
+    # WORKER_TIMEOUT_SECONDS is patched to 3s so hanging workers time out fast.
+    with patch("liquid_swarm.nodes.execute_task", side_effect=custom_execute), \
+         patch("liquid_swarm.nodes.WORKER_TIMEOUT_SECONDS", 3), \
+         patch("liquid_swarm.graph.bootstrap_node", side_effect=bootstrap_mock), \
+         patch("liquid_swarm.graph.archivar_node", side_effect=lambda s: {}), \
+         patch("liquid_swarm.graph.thinker_node", side_effect=thinker_mock):
+        graph = build_swarm_graph()
+
+        async def run():
+            return await graph.ainvoke(state)
+
+        # Use new_event_loop to avoid any pytest-asyncio event loop conflicts
+        loop = asyncio.new_event_loop()
+        try:
+            ctx.result = loop.run_until_complete(run())
+        finally:
+            loop.close()
 
 
 # ── Then Steps ──────────────────────────────────────────────────────────────

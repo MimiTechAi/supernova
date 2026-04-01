@@ -36,7 +36,7 @@ class TestRateLimitProtection:
         max_concurrent_seen = 0
         lock = asyncio.Lock()
 
-        async def counting_execute(task, config=None):
+        async def counting_execute(task, config=None, **kwargs):
             nonlocal current_concurrent, max_concurrent_seen
 
             async with lock:
@@ -63,6 +63,8 @@ class TestRateLimitProtection:
                 "results": [],
                 "final_results": [],
                 "flagged_results": [],
+                "global_context": None,
+                "strategy_plan": None,
             }
             result = await compiled_graph.ainvoke(state)
 

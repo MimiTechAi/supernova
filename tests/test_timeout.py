@@ -28,11 +28,11 @@ class TestTimeoutAndHardKill:
         """1 worker times out, 49 succeed. Graph stays alive."""
         doomed_task_id = fifty_tasks[5].task_id  # Worker #5 will hang
 
-        async def slow_or_normal(task, config=None):
+        async def slow_or_normal(task, config=None, **kwargs):
             """Mock: task #5 sleeps 30s (will timeout), others sleep 0.1s."""
             import asyncio
             if task.task_id == doomed_task_id:
-                await asyncio.sleep(30)  # Will be killed by wait_for
+                await asyncio.sleep(999)  # Will be killed by wait_for
                 return TaskResult(
                     task_id=task.task_id,
                     status="success",
@@ -47,13 +47,16 @@ class TestTimeoutAndHardKill:
                     cost_usd=0.002,
                 )
 
-        with patch("liquid_swarm.nodes.execute_task", side_effect=slow_or_normal):
+        with patch("liquid_swarm.nodes.execute_task", side_effect=slow_or_normal), \
+             patch("liquid_swarm.nodes.WORKER_TIMEOUT_SECONDS", 3):
             state = {
                 "tasks": fifty_tasks,
                 "current_task": None,
                 "results": [],
                 "final_results": [],
                 "flagged_results": [],
+                "global_context": None,
+                "strategy_plan": None,
             }
             result = await compiled_graph.ainvoke(state)
 
@@ -78,17 +81,20 @@ class TestTimeoutAndHardKill:
         """A timed-out worker must return a valid TaskResult, not crash."""
         doomed_task = TaskInput(task_id="slow-one", query="Will timeout")
 
-        async def always_hang(task, config=None):
+        async def always_hang(task, config=None, **kwargs):
             import asyncio
             await asyncio.sleep(999)
 
-        with patch("liquid_swarm.nodes.execute_task", side_effect=always_hang):
+        with patch("liquid_swarm.nodes.execute_task", side_effect=always_hang), \
+             patch("liquid_swarm.nodes.WORKER_TIMEOUT_SECONDS", 3):
             state = {
                 "tasks": [doomed_task],
                 "current_task": None,
                 "results": [],
                 "final_results": [],
                 "flagged_results": [],
+                "global_context": None,
+                "strategy_plan": None,
             }
             # Must NOT raise — timeout is caught internally
             result = await compiled_graph.ainvoke(state)
@@ -103,17 +109,20 @@ class TestTimeoutAndHardKill:
         self, compiled_graph, ten_tasks: list[TaskInput],
     ):
         """Even if ALL workers timeout, graph completes without exception."""
-        async def all_hang(task, config=None):
+        async def all_hang(task, config=None, **kwargs):
             import asyncio
             await asyncio.sleep(999)
 
-        with patch("liquid_swarm.nodes.execute_task", side_effect=all_hang):
+        with patch("liquid_swarm.nodes.execute_task", side_effect=all_hang), \
+             patch("liquid_swarm.nodes.WORKER_TIMEOUT_SECONDS", 3):
             state = {
                 "tasks": ten_tasks,
                 "current_task": None,
                 "results": [],
                 "final_results": [],
                 "flagged_results": [],
+                "global_context": None,
+                "strategy_plan": None,
             }
             result = await compiled_graph.ainvoke(state)
 

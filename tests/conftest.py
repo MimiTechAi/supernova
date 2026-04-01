@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from unittest.mock import patch
+
 import pytest
 
 from liquid_swarm.graph import build_swarm_graph
@@ -17,10 +19,45 @@ def reset_semaphore():
     set_api_semaphore(50)
 
 
+async def _mock_bootstrap(state):
+    """Fast bootstrap mock — no ChromaDB or embedding calls in unit tests."""
+    return {"global_context": "Test context: no prior knowledge needed."}
+
+
+async def _mock_thinker(state):
+    """Fast thinker mock — no LLM call in unit tests."""
+    return {"strategy_plan": "Test strategy: execute all tasks precisely."}
+
+
+async def _mock_archivar(state):
+    """Fast archivar mock — no ChromaDB writes in unit tests."""
+    return {}
+
+
 @pytest.fixture
 def compiled_graph():
-    """A freshly compiled swarm graph for each test."""
-    return build_swarm_graph()
+    """A freshly compiled swarm graph with bootstrap/thinker/archivar mocked.
+
+    Unit tests should only test worker execution and graph routing, not
+    LLM calls in bootstrap/thinker which require real API keys.
+    """
+    with patch("liquid_swarm.graph.bootstrap_node", side_effect=_mock_bootstrap), \
+         patch("liquid_swarm.graph.thinker_node", side_effect=_mock_thinker), \
+         patch("liquid_swarm.graph.archivar_node", side_effect=_mock_archivar):
+        yield build_swarm_graph()
+
+
+def make_state(tasks: list[TaskInput]) -> dict:
+    """Create a properly typed SwarmState dict for tests."""
+    return {
+        "tasks": tasks,
+        "current_task": None,
+        "results": [],
+        "final_results": [],
+        "flagged_results": [],
+        "global_context": None,
+        "strategy_plan": None,
+    }
 
 
 @pytest.fixture

@@ -168,7 +168,7 @@ class TestAssassinEndToEnd:
             TaskInput(task_id="rogue", query="Rogue analysis"),
         ]
 
-        async def rogue_execute(task, config=None):
+        async def rogue_execute(task, config=None, **kwargs):
             import asyncio
             await asyncio.sleep(0.1)
             if task.task_id == "rogue":
@@ -193,6 +193,8 @@ class TestAssassinEndToEnd:
                 "results": [],
                 "final_results": [],
                 "flagged_results": [],
+                "global_context": None,
+                "strategy_plan": None,
             }
             result = await compiled_graph.ainvoke(state)
 

@@ -39,10 +39,17 @@ from liquid_swarm.web_search import (
     parse_sources,
 )
 from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
-from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 from contextlib import asynccontextmanager
 from liquid_swarm.graph import build_swarm_graph
 from langchain_core.runnables import RunnableConfig
+
+# Postgres checkpointer is optional — only available when psycopg binary is installed
+try:
+    from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver as _AsyncPostgresSaver
+    _POSTGRES_AVAILABLE = True
+except ImportError:
+    _AsyncPostgresSaver = None  # type: ignore[assignment,misc]
+    _POSTGRES_AVAILABLE = False
 
 app = FastAPI(title="Supernova — Command Center")
 
@@ -86,8 +93,8 @@ app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
 @asynccontextmanager
 async def get_memory_saver():
     postgres_url = os.environ.get("POSTGRES_URL")
-    if postgres_url:
-        async with AsyncPostgresSaver.from_conn_string(postgres_url) as memory:
+    if postgres_url and _POSTGRES_AVAILABLE and _AsyncPostgresSaver is not None:
+        async with _AsyncPostgresSaver.from_conn_string(postgres_url) as memory:
             await memory.setup()
             yield memory
     else:

@@ -20,7 +20,7 @@ import pytest
 from liquid_swarm.models import TaskInput, TaskResult
 
 
-async def _fast_fake_execute(task, config=None):
+async def _fast_fake_execute(task, config=None, **kwargs):
     """Deterministic mock: 0.1s sleep, always succeeds."""
     import asyncio
     await asyncio.sleep(0.1)
@@ -46,6 +46,8 @@ class TestAsyncParallelExecution:
             "results": [],
             "final_results": [],
             "flagged_results": [],
+            "global_context": None,
+            "strategy_plan": None,
         }
 
         with patch("liquid_swarm.nodes.execute_task", side_effect=_fast_fake_execute):
@@ -74,6 +76,8 @@ class TestAsyncParallelExecution:
             "results": [],
             "final_results": [],
             "flagged_results": [],
+            "global_context": None,
+            "strategy_plan": None,
         }
 
         with patch("liquid_swarm.nodes.execute_task", side_effect=_fast_fake_execute):
@@ -96,6 +100,8 @@ class TestAsyncParallelExecution:
             "results": [],
             "final_results": [],
             "flagged_results": [],
+            "global_context": None,
+            "strategy_plan": None,
         }
 
         with patch("liquid_swarm.nodes.execute_task", side_effect=_fast_fake_execute):

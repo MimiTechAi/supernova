@@ -1205,6 +1205,47 @@
         let successCount = 0;
         let timerInterval = null;
         let startTime = null;
+        let ws = null;
+
+        function connectWebSocket() {
+            return new Promise((resolve, reject) => {
+                const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+                const wsUrl = `${protocol}//${window.location.host}/ws/swarm`;
+                
+                if (ws && ws.readyState === WebSocket.OPEN) {
+                    resolve(ws);
+                    return;
+                }
+
+                ws = new WebSocket(wsUrl);
+
+                ws.onopen = () => {
+                    console.log('WebSocket connected');
+                    resolve(ws);
+                };
+
+                ws.onmessage = (event) => {
+                    try {
+                        const data = JSON.parse(event.data);
+                        handleEvent(data.event, data.data);
+                    } catch (e) {
+                        console.error('Error parsing WebSocket message:', e);
+                    }
+                };
+
+                ws.onerror = (err) => {
+                    console.error('WebSocket error:', err);
+                    if (ws.readyState !== WebSocket.OPEN) {
+                        reject(err);
+                    }
+                };
+
+                ws.onclose = () => {
+                    console.log('WebSocket disconnected');
+                    ws = null;
+                };
+            });
+        }
 
         // ══════════════════════════════════════════════════════
         // MAIN: IGNITE THE SWARM
@@ -1266,7 +1307,10 @@
             vizSetState('decomposing');
 
             try {
+                await connectWebSocket();
+
                 const payload = {
+                    type: 'ignite',
                     query,
                     num_tasks: numTasks,
                     model: selectedModel,
@@ -1276,43 +1320,14 @@
                     web_search_enabled: webSearchEnabled,
                 };
 
-                const response = await fetch('/api/ignite', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(payload),
-                });
-
-                const reader = response.body.getReader();
-                const decoder = new TextDecoder();
-                let buffer = '';
-
-                while (true) {
-                    const { done, value } = await reader.read();
-                    if (done) break;
-                    buffer += decoder.decode(value, { stream: true });
-
-                    const lines = buffer.split('\n');
-                    buffer = lines.pop();
-
-                    let eventType = '';
-                    for (const line of lines) {
-                        if (line.startsWith('event: ')) {
-                            eventType = line.slice(7).trim();
-                        } else if (line.startsWith('data: ')) {
-                            const data = JSON.parse(line.slice(6));
-                            handleEvent(eventType, data);
-                        }
-                    }
-                }
+                ws.send(JSON.stringify(payload));
             } catch (err) {
-                console.error('Stream error:', err);
-                document.getElementById('phaseText').textContent = `Error: ${err.message}`;
-            } finally {
+                console.error('WebSocket Error:', err);
+                document.getElementById('phaseText').textContent = `❌ Error: ${err.message}`;
                 btn.disabled = false;
                 btn.classList.remove('loading');
                 btn.textContent = '🚀 IGNITE';
-                // Stop clearing the timer here because we might just be paused!
-                // clearInterval will happen in handleComplete or clearAll.
+                if (timerInterval) clearInterval(timerInterval);
             }
         }
 
@@ -1351,6 +1366,13 @@
                 case 'error':
                     document.getElementById('phaseText').textContent = `❌ ${data.message}`;
                     vizSetState('idle');
+                    const btnErr = document.getElementById('igniteBtn');
+                    if (btnErr) {
+                        btnErr.disabled = false;
+                        btnErr.classList.remove('loading');
+                        btnErr.textContent = '🚀 IGNITE';
+                    }
+                    if (timerInterval) clearInterval(timerInterval);
                     break;
             }
         }
@@ -1463,37 +1485,12 @@
                     modelId = modelSelect.value;
                 }
                 
-                const response = await fetch('/api/approve', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        thread_id: thread_id,
-                        model: modelId
-                    }),
-                });
-
-                const reader = response.body.getReader();
-                const decoder = new TextDecoder();
-                let buffer = '';
-
-                while (true) {
-                    const { done, value } = await reader.read();
-                    if (done) break;
-                    buffer += decoder.decode(value, { stream: true });
-
-                    const lines = buffer.split('\n');
-                    buffer = lines.pop();
-
-                    let eventType = '';
-                    for (const line of lines) {
-                        if (line.startsWith('event: ')) {
-                            eventType = line.slice(7).trim();
-                        } else if (line.startsWith('data: ')) {
-                            const data = JSON.parse(line.slice(6));
-                            handleEvent(eventType, data);
-                        }
-                    }
-                }
+                await connectWebSocket();
+                ws.send(JSON.stringify({
+                    type: 'approve',
+                    thread_id: thread_id,
+                    model: modelId
+                }));
             } catch (err) {
                 console.error('Approve error:', err);
                 document.getElementById('phaseText').textContent = `❌ Approve Error: ${err.message}`;
@@ -1596,6 +1593,13 @@
             document.getElementById('phaseText').textContent = '✅ Swarm complete';
             document.getElementById('spinner').style.display = 'none';
             document.getElementById('elapsedTime').textContent = data.total_time + 's';
+
+            const btn = document.getElementById('igniteBtn');
+            if (btn) {
+                btn.disabled = false;
+                btn.classList.remove('loading');
+                btn.textContent = '🚀 IGNITE';
+            }
 
             const summary = document.getElementById('summary');
             document.getElementById('sumTime').textContent = data.total_time + 's';

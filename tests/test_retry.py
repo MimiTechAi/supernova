@@ -38,28 +38,19 @@ class TestRetryTransientErrors:
     @pytest.mark.asyncio
     async def test_retries_once_on_http_500(self, sample_task, config):
         """HTTP 500 is transient — should retry once."""
-        mock_response_fail = MagicMock()
-        mock_response_fail.status_code = 500
-        mock_response_fail.raise_for_status = MagicMock(
-            side_effect=httpx.HTTPStatusError(
-                "Server Error", request=MagicMock(), response=mock_response_fail
-            )
-        )
-
         call_count = 0
 
-        async def mock_post(*args, **kwargs):
+        mock_response = MagicMock()
+        mock_response.status_code = 500
+
+        async def mock_execute(task, config=None):
             nonlocal call_count
             call_count += 1
-            return mock_response_fail
+            raise httpx.HTTPStatusError(
+                "Server Error", request=MagicMock(), response=mock_response
+            )
 
-        with patch("liquid_swarm.nodes.httpx.AsyncClient") as MockClient:
-            mock_client = AsyncMock()
-            mock_client.post = mock_post
-            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-            mock_client.__aexit__ = AsyncMock(return_value=False)
-            MockClient.return_value = mock_client
-
+        with patch("liquid_swarm.nodes.execute_task", side_effect=mock_execute):
             result = await execute_task_with_retry(sample_task, config, max_retries=1)
 
         assert call_count == 2, "Should call API exactly 2 times (1 original + 1 retry)"
@@ -76,36 +67,24 @@ class TestRetrySuccessOnSecondAttempt:
         """First call fails with 500, second call succeeds."""
         call_count = 0
 
-        mock_response_ok = MagicMock()
-        mock_response_ok.status_code = 200
-        mock_response_ok.raise_for_status = MagicMock()
-        mock_response_ok.json = MagicMock(return_value={
-            "choices": [{"message": {"content": "Analysis result"}}],
-            "usage": {"prompt_tokens": 50, "completion_tokens": 100},
-        })
+        mock_response_500 = MagicMock()
+        mock_response_500.status_code = 500
 
-        mock_response_fail = MagicMock()
-        mock_response_fail.status_code = 500
-        mock_response_fail.raise_for_status = MagicMock(
-            side_effect=httpx.HTTPStatusError(
-                "Server Error", request=MagicMock(), response=mock_response_fail
-            )
-        )
-
-        async def mock_post(*args, **kwargs):
+        async def mock_execute(task, config=None):
             nonlocal call_count
             call_count += 1
             if call_count == 1:
-                return mock_response_fail
-            return mock_response_ok
+                raise httpx.HTTPStatusError(
+                    "Server Error", request=MagicMock(), response=mock_response_500
+                )
+            return TaskResult(
+                task_id=task.task_id,
+                status="success",
+                data={"result": "Analysis result"},
+                cost_usd=0.002,
+            )
 
-        with patch("liquid_swarm.nodes.httpx.AsyncClient") as MockClient:
-            mock_client = AsyncMock()
-            mock_client.post = mock_post
-            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-            mock_client.__aexit__ = AsyncMock(return_value=False)
-            MockClient.return_value = mock_client
-
+        with patch("liquid_swarm.nodes.execute_task", side_effect=mock_execute):
             result = await execute_task_with_retry(sample_task, config, max_retries=1)
 
         assert result.status == "success"
@@ -124,24 +103,15 @@ class TestNoPermanentRetry:
 
         mock_response = MagicMock()
         mock_response.status_code = 401
-        mock_response.raise_for_status = MagicMock(
-            side_effect=httpx.HTTPStatusError(
-                "Unauthorized", request=MagicMock(), response=mock_response
-            )
-        )
 
-        async def mock_post(*args, **kwargs):
+        async def mock_execute(task, config=None):
             nonlocal call_count
             call_count += 1
-            return mock_response
+            raise httpx.HTTPStatusError(
+                "Unauthorized", request=MagicMock(), response=mock_response
+            )
 
-        with patch("liquid_swarm.nodes.httpx.AsyncClient") as MockClient:
-            mock_client = AsyncMock()
-            mock_client.post = mock_post
-            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-            mock_client.__aexit__ = AsyncMock(return_value=False)
-            MockClient.return_value = mock_client
-
+        with patch("liquid_swarm.nodes.execute_task", side_effect=mock_execute):
             result = await execute_task_with_retry(sample_task, config, max_retries=1)
 
         assert call_count == 1, "Should NOT retry on 401"
@@ -157,22 +127,13 @@ class TestRetryCostAccounting:
     async def test_zero_cost_on_double_failure(self, sample_task, config):
         mock_response = MagicMock()
         mock_response.status_code = 500
-        mock_response.raise_for_status = MagicMock(
-            side_effect=httpx.HTTPStatusError(
+
+        async def mock_execute(task, config=None):
+            raise httpx.HTTPStatusError(
                 "Server Error", request=MagicMock(), response=mock_response
             )
-        )
 
-        async def mock_post(*args, **kwargs):
-            return mock_response
-
-        with patch("liquid_swarm.nodes.httpx.AsyncClient") as MockClient:
-            mock_client = AsyncMock()
-            mock_client.post = mock_post
-            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-            mock_client.__aexit__ = AsyncMock(return_value=False)
-            MockClient.return_value = mock_client
-
+        with patch("liquid_swarm.nodes.execute_task", side_effect=mock_execute):
             result = await execute_task_with_retry(sample_task, config, max_retries=1)
 
         assert result.cost_usd == 0.0, "Failed attempts should not incur cost"

@@ -34,8 +34,25 @@ WORKER_TIMEOUT_SECONDS = 30
 
 # Rate-limit semaphore: limits concurrent API calls.
 # Default: 10 concurrent workers (prevents HTTP 429).
-# Use set_api_semaphore() to reconfigure for tests or different environments.
-_api_semaphore: asyncio.Semaphore = asyncio.Semaphore(10)
+# Created lazily per event loop to be compatible with asyncio.run() in tests.
+_max_concurrent: int = 10
+_api_semaphore: asyncio.Semaphore | None = None
+_semaphore_loop: object | None = None  # track which event loop owns the semaphore
+
+
+def _get_semaphore() -> asyncio.Semaphore:
+    """Return the API semaphore, creating a fresh one if the event loop changed."""
+    global _api_semaphore, _semaphore_loop
+    try:
+        current_loop = asyncio.get_running_loop()
+    except RuntimeError:
+        current_loop = None
+
+    if _api_semaphore is None or current_loop is not _semaphore_loop:
+        _api_semaphore = asyncio.Semaphore(_max_concurrent)
+        _semaphore_loop = current_loop
+
+    return _api_semaphore
 
 
 def set_api_semaphore(max_concurrent: int) -> None:
@@ -44,8 +61,9 @@ def set_api_semaphore(max_concurrent: int) -> None:
     Args:
         max_concurrent: Maximum number of workers hitting the API simultaneously.
     """
-    global _api_semaphore
-    _api_semaphore = asyncio.Semaphore(max_concurrent)
+    global _max_concurrent, _api_semaphore
+    _max_concurrent = max_concurrent
+    _api_semaphore = None  # Force recreation on next use
 
 
 # ── Big Bang Router (Fan-Out) ────────────────────────────────────────────────
@@ -106,6 +124,7 @@ class WorkerSubState(TypedDict):
     task: TaskInput
     attempts: int
     result: dict[str, object] | None
+    cost_usd: float  # Propagate cost from execute_task through the mesh
     error: str | None
     global_context: str
     strategy_plan: str
@@ -114,28 +133,36 @@ async def generate_node(state: WorkerSubState) -> dict:
     task = state["task"]
     try:
         res = await execute_task(
-            task, 
+            task,
             global_context=state.get("global_context", ""),
-            strategy_plan=state.get("strategy_plan", "")
+            strategy_plan=state.get("strategy_plan", ""),
         )
-        return {"result": res.data, "attempts": state["attempts"] + 1, "error": None}
+        return {
+            "result": res.data,
+            "cost_usd": res.cost_usd,
+            "attempts": state["attempts"] + 1,
+            "error": None,
+        }
     except Exception as exc:
-        return {"error": str(exc), "attempts": state["attempts"] + 1}
+        return {"error": str(exc), "attempts": state["attempts"] + 1, "cost_usd": 0.0}
 
 def evaluate_edge(state: WorkerSubState) -> str:
     """Decide if the worker should self-correct or finish."""
     if state["error"] or not state["result"]:
         return "generate" if state["attempts"] < 3 else "end"
     
-    # Check confidence
-    conf_str = state["result"].get("confidence", "")
+    # Check confidence — re-queue with a self-correction hint if too low
+    conf_str = str(state["result"].get("confidence", ""))
     try:
         conf = int("".join(c for c in conf_str if c.isdigit()))
         if conf < 80 and state["attempts"] < 3:
-            # Tell LLM to self-correct by mutating the query
-            state["task"].query += f" (Note: previous attempt only got {conf}% confidence. BE MORE PRECISE.)"
+            # Rebuild task with appended self-correction hint (Pydantic models are immutable)
+            original = state["task"]
+            state["task"] = original.model_copy(update={
+                "query": original.query + f" (Note: previous attempt confidence={conf}%. Be more precise and cite sources.)"
+            })
             return "generate"
-    except ValueError:
+    except (ValueError, TypeError):
         pass
     
     return "end"
@@ -156,31 +183,49 @@ async def worker_node(state: SwarmState) -> dict[str, list[TaskResult]]:
         return {"results": [TaskResult(task_id="unknown", status="error", data={"error": "No current_task"})]}
 
     try:
-        async with _api_semaphore:
-            # We run the sub-graph mesh to accomplish self-correction iteratively
-            final_sub_state = await compiled_worker_mesh.ainvoke(
-                {
-                    "task": task, 
-                    "attempts": 0, 
-                    "result": None, 
-                    "error": None, 
-                    "global_context": global_context,
-                    "strategy_plan": strategy_plan
-                }
+        async with _get_semaphore():
+            # Run the self-correcting mesh; hard-kill after WORKER_TIMEOUT_SECONDS
+            final_sub_state = await asyncio.wait_for(
+                compiled_worker_mesh.ainvoke(
+                    {
+                        "task": task,
+                        "attempts": 0,
+                        "result": None,
+                        "cost_usd": 0.0,
+                        "error": None,
+                        "global_context": global_context,
+                        "strategy_plan": strategy_plan,
+                    }
+                ),
+                timeout=WORKER_TIMEOUT_SECONDS,
             )
-            
-        if final_sub_state["error"]:
+
+        cost = final_sub_state.get("cost_usd", 0.0) or 0.0
+        if final_sub_state.get("error"):
             res = TaskResult(
-                task_id=task.task_id, 
-                status="error", 
-                data={"error": final_sub_state["error"]}
+                task_id=task.task_id,
+                status="error",
+                data={"error": final_sub_state["error"]},
+                cost_usd=cost,
             )
         else:
-            res = TaskResult(
-                task_id=task.task_id, 
-                status="success", 
-                data=final_sub_state["result"] or {}
-            )
+            raw_data = final_sub_state["result"] or {}
+            try:
+                res = TaskResult(
+                    task_id=task.task_id,
+                    status="success",
+                    data=raw_data,
+                    cost_usd=cost,
+                )
+            except ValidationError:
+                # Data contains impossible values (e.g. market_share > 100%).
+                # Preserve it unmodified so reduce_node can detect and flag it.
+                res = TaskResult.model_construct(
+                    task_id=task.task_id,
+                    status="success",
+                    data=raw_data,
+                    cost_usd=cost,
+                )
         return {"results": [res]}
 
     except asyncio.TimeoutError:

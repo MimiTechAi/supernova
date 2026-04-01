@@ -18,7 +18,7 @@ import pytest
 from liquid_swarm.models import TaskInput, TaskResult
 
 
-async def _cost_tracking_execute(task, config=None):
+async def _cost_tracking_execute(task, config=None, **kwargs):
     """Mock with fixed cost for deterministic assertions."""
     import asyncio
     await asyncio.sleep(0.05)
@@ -44,6 +44,8 @@ class TestCostLedgerAuditing:
             "results": [],
             "final_results": [],
             "flagged_results": [],
+            "global_context": None,
+            "strategy_plan": None,
         }
         with patch("liquid_swarm.nodes.execute_task", side_effect=_cost_tracking_execute):
             result = await compiled_graph.ainvoke(state)
@@ -66,6 +68,8 @@ class TestCostLedgerAuditing:
             "results": [],
             "final_results": [],
             "flagged_results": [],
+            "global_context": None,
+            "strategy_plan": None,
         }
         with patch("liquid_swarm.nodes.execute_task", side_effect=_cost_tracking_execute):
             result = await compiled_graph.ainvoke(state)
@@ -85,6 +89,8 @@ class TestCostLedgerAuditing:
             "results": [],
             "final_results": [],
             "flagged_results": [],
+            "global_context": None,
+            "strategy_plan": None,
         }
         with patch("liquid_swarm.nodes.execute_task", side_effect=_cost_tracking_execute):
             result = await compiled_graph.ainvoke(state)
