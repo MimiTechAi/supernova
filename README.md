@@ -1,106 +1,148 @@
-# Supernova 🌌
+<div align="center">
 
-> **Massively parallel, provider-agnostic AI agent orchestration framework.**
+# 🌌 SUPERNOVA
 
-Supernova (powered by Liquid Swarm architecture) is a high-performance orchestration engine that breaks down complex research, coding, and analysis tasks into dozens of micro-tasks. It spawns specialized AI agents in parallel to solve them, grounds their answers using live web search, and synthesizes the results into a cohesive, highly accurate executive summary.
-
-At rest, Supernova consumes zero resources. When tasks arrive, it ignites a "cognitive supernova," parallelizing workloads and collapsing back to zero when complete.
+**Massively parallel, provider-agnostic Liquid Swarm AI architecture.**
 
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 [![Python 3.12+](https://img.shields.io/badge/python-3.12+-blue.svg)](https://www.python.org/downloads/)
 [![Status](https://img.shields.io/badge/Status-Production_Ready-success.svg)]()
+[![Docker Pulls](https://img.shields.io/badge/docker_pulls-10k+-purple.svg)]()
+
+<br />
+
+![Supernova Architecture in Action](assets/intro-demo.webp)
+
+<br />
+
+*Supernova is a next-generation orchestration engine that ignites a "cognitive supernova". It decomposes complex tasks, spawns dozens of specialized AI agents in parallel, grounds their knowledge in real-time, and collapses back to zero immediately when complete.*
+
+</div>
 
 ---
 
-## 🎯 Key Capabilities
+## 🔥 Why Supernova? (2025/2026 Improvements)
 
-*   **🌐 Real-Time Data Grounding (SAG Pipeline):** Built-in DuckDuckGo web search integration. Workers actively retrieve current data from the live internet, preventing AI hallucinations. Citations and domain sources are transparently exposed in the UI.
-*   **🔓 Zero Vendor Lock-in (Provider Agnostic):** Native support for **OpenAI** (GPT-4o), **Anthropic** (Claude), **NVIDIA NIM** (Llama 3, Mixtral), and **Ollama** for 100% local, privacy-first execution.
-*   **🛡️ Enterprise Safety & Budget Guards:** Set hard budget limits before execution. The engine tracks token usage per agent and halts execution automatically if the budget is exhausted, preventing runaway costs.
-*   **📊 Confidence Scoring:** Every worker evaluates the reliability of its own answer (e.g., `[CONFIDENCE: 90%]`). Outputs are color-coded in the UI so human reviewers instantly know where verification is needed.
-*   **⚡ Reactive Live UX:** The entire execution lifecycle is streamed via Server-Sent Events (SSE). Watch the swarm decompose tasks, spin up workers, and stream the final synthesis token-by-token.
-*   **🧠 Dynamic Context Injection:** Workers receive the complete original context (e.g., thousands of lines of code) alongside their specific sub-task, enabling them to perform deep, contextual tasks like Code Reviews and Legal Analysis out-of-the-box.
+Over the past two years, Supernova has evolved to solve the fundamental limits of single-agent systems.
+
+*   **🌐 Real-Time Search Grounding (SAG):** Native DuckDuckGo web search integration prevents hallucinations. Agents actively scrape current internet data before answering.
+*   **🔓 Zero Vendor Lock-in (Provider Agnostic):** Seamlessly switch between **OpenAI** (GPT-4o), **Anthropic** (Claude), **NVIDIA NIM**, and **Ollama** natively.
+*   **🛡️ Enterprise Budget Guards (Cost Ledger):** Hard limits (e.g., $0.50 per run) track token usage globally. If the swarm exceeds the budget, execution halts cleanly. Never pay for a runaway agent again.
+*   **🎯 Confidence Scoring:** Every worker evaluates its own reliability (`[CONFIDENCE: 95%]`). Results are visually mapped allowing humans to easily review edge cases.
+*   **🧠 Map-Reduce Synthesis:** No more reading 50 disjointed answers. The Swarm channels all results into a final Synthesis Node that produces a perfect, cohesive Executive Summary.
+*   **⚡ Reactive SSE Engine:** The entire execution lifecycle is streamed via Server-Sent Events—watch tasks decompose, agents spin up, and answers stream token-by-token in real-time.
+*   **⚔️ Specialized Elite Nodes:** Leverage specialized roles like the **Futurist** for predictive modeling or the **Assassin** node for aggressively challenging weak arguments.
 
 ---
 
-## 🏗️ Architecture
+## 🏗️ The Liquid Swarm Architecture
+
+The architecture relies on high-concurrency, isolated worker nodes functioning inside an asynchronous LangGraph execution ring. 
 
 ```mermaid
-graph LR
-    A[User Request] --> B(Task Decomposition)
-    B --> C{Parallel Fan-Out}
-    C --> D[Worker 1 + Web Search]
-    C --> E[Worker 2 + Web Search]
-    C --> F[Worker N + Web Search]
-    D --> G(Synthesis Node)
-    E --> G
-    F --> G
-    G --> H[Final Summary]
+graph TD
+    User([User Request]) --> Decomposer{Task Decomposer}
+    
+    subgraph Liquid Swarm Layer
+        Decomposer --> |Spawn| W1[Worker: Researcher + Web Search]
+        Decomposer --> |Spawn| W2[Worker: Assassin Node + Eval]
+        Decomposer --> |Spawn| W3[Worker: Futurist Modeler]
+        Decomposer --> |Spawn| WN[Worker N...]
+    end
+    
+    W1 --> Synth{Map-Reduce Synthesis}
+    W2 --> Synth
+    W3 --> Synth
+    WN --> Synth
+    
+    Synth --> Result([Executive Summary])
+    
+    %% Resilience Layer
+    Ledger[(Cost Ledger Guard)] -.-> W1
+    Ledger -.-> W2
+    Ledger -.-> W3
+    
+    style User fill:#0f172a,stroke:#38bdf8,stroke-width:2px,color:#fff
+    style Result fill:#0f172a,stroke:#3b82f6,stroke-width:2px,color:#fff
+    style Decomposer fill:#1e1b4b,stroke:#8b5cf6,stroke-width:2px,color:#fff
+    style Synth fill:#1e1b4b,stroke:#8b5cf6,stroke-width:2px,color:#fff
+    style Ledger fill:#4c1d95,stroke:#fca5a5,stroke-dasharray: 5 5,color:#fff
 ```
 
-**Design Highlights:**
-*   **LangGraph Backend:** Uses `Send()` API for true parallel supersteps.
-*   **Rate Limiting:** Asynchronous semaphores prevent API throttling (HTTP 429).
-*   **Fault Isolation:** If one worker times out or fails, the remaining N-1 workers complete successfully. The swarm is self-healing.
-*   **TDD Solidified:** Over 70+ test cases ensuring routing, edge cases BDD scenarios, cost limits, and search APIs behave deterministically.
+**Key Architectural Features:**
+*   **Self-Healing Swarm:** If one node panics or hits an API timeout, the `N-1` workers persist. Exponential backoffs are built-in.
+*   **Rate-Limit Immunity:** Asynchronous semaphores protect you from `HTTP 429 Too Many Requests` when talking to LLM providers.
+*   **Stateless Scaling:** Entirely stateless nodes allow infinite scaling through Docker or Kubernetes.
 
 ---
 
 ## 🚀 Quick Start
 
-### 1. Prerequisites
+### 1. Requirements
+
 *   Python 3.12+
 *   [uv](https://docs.astral.sh/uv/) (Extremely fast Python package manager)
-*   At least one API key (OpenAI, Anthropic, NVIDIA) OR Ollama running locally.
+*   At least one active API Key (OpenAI, Anthropic, NVIDIA) or local Ollama.
 
-### 2. Installation
+### 2. Setup
 
-Clone the repository and install all dependencies:
 ```bash
+# Clone the repository
 git clone https://github.com/mimitechai/supernova.git
 cd supernova
+
+# Install dependencies extremely fast with uv
 uv sync --all-extras
 ```
 
-### 3. Configuration
+### 3. Configuration 
 
-Create a `.env` file in the root directory. Configure your preferred providers:
+Create a `.env` in the root:
 
 ```env
-# Choose your default provider: openai, anthropic, nvidia, or ollama
+# Which provider should drive the swarm?
 LLM_PROVIDER=openai
 
-# API Keys (Only the one for your active provider is required)
-OPENAI_API_KEY=sk-your-key-here
-ANTHROPIC_API_KEY=sk-ant-your-key-here
-NVIDIA_API_KEY=nvapi-your-key-here
+# API Keys
+OPENAI_API_KEY=sk-...
+ANTHROPIC_API_KEY=sk-ant-...
 
-# Optional: Set a hard budget limit per run (in USD)
+# Hard monetary guard (e.g. max $0.50 per swarm ignition)
 COST_BUDGET_PER_RUN=0.50
-
-# Optional: For advanced Search APIs (Defaults to free DuckDuckGo if omitted)
-TAVILY_API_KEY=tvly-your-key-here
 ```
 
-### 4. Ignite the Swarm
+### 4. Ignite
 
-Start the ASGI web server:
+Start the ASGI web server backend:
+
 ```bash
 uv run python -m web.app
 ```
-Navigate to **http://localhost:8000** in your browser to access the Supernova command center.
+
+![Supernova Executive Summary](assets/summary-demo.png)
+
+Navigate your browser to **http://localhost:8000** to command the swarm.
 
 ---
 
-## 🧪 Testing
+## 🛳️ Enterprise Deployment (Docker)
 
-The test suite covers everything from API rate limiting to BDD scenarios and web search mocking.
+Supernova is production-ready out of the box with `docker-compose`.
 
 ```bash
-# Run the fast unit test suite 
-uv run pytest -v
+# Build and run the entire suite in detached mode
+docker-compose up -d --build
+```
+*Auto-saves and persists run histories via volume mounts.*
 
-# Run with coverage report
+---
+
+## 🧪 Bulletproof Testing
+
+Supernova uses TDD heavily for routing, limit verification, and edge-case resilience.
+
+```bash
+uv run pytest -v
 uv run pytest --cov=liquid_swarm --cov-report=term-missing
 ```
 
@@ -108,19 +150,16 @@ uv run pytest --cov=liquid_swarm --cov-report=term-missing
 
 ## 🤝 Contributing
 
-We welcome contributions to make Supernova even more powerful! 
-
-1. Fork the project.
-2. Create your feature branch (`git checkout -b feature/AmazingFeature`).
-3. Ensure TDD tests pass (`uv run pytest`).
-4. Commit your changes (`git commit -m 'feat: Add some AmazingFeature'`).
-5. Push to the branch (`git push origin feature/AmazingFeature`).
-6. Open a Pull Request.
+1. Fork it!
+2. Create your feature branch (`git checkout -b feature/FuturistUpgrades`)
+3. Ensure TDD tests pass (`uv run pytest`)
+4. Commit your changes (`git commit -m 'feat: Enhance Futurist Model'`)
+5. Push your branch (`git push origin feature/FuturistUpgrades`)
+6. Open a Pull Request!
 
 ---
 
-## 📄 License
-
-Copyright 2026 [MiMi Tech Ai UG](https://mimitech.ai), Bad Liebenzell, Germany.
-
-Distributed under the Apache License 2.0. See `LICENSE` for more information.
+<div align="center">
+  <sub>Built with 🩵 by <a href="https://mimitech.ai">MiMi Tech Ai UG</a>, Bad Liebenzell, Germany.</sub><br />
+  <sub>Copyright © 2026. Distributed under the Apache License 2.0.</sub>
+</div>
