@@ -33,5 +33,6 @@ class SwarmState(TypedDict):
     final_results: list[TaskResult]
     flagged_results: list[TaskResult]
     global_context: str | None
+    strategy_plan: str | None
 
 

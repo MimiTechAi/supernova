@@ -4,14 +4,16 @@ After all workers complete, one final LLM call takes all successful results
 and produces a coherent, structured executive summary.
 
 This module has ZERO LangGraph imports — portable to any runtime.
+Uses the multi-provider system (NVIDIA, OpenAI, Anthropic, Ollama).
 """
 
 from __future__ import annotations
 
 import httpx
 
-from liquid_swarm.config import NVIDIA_API_BASE, NVIDIA_API_KEY, SwarmConfig
+from liquid_swarm.config import SwarmConfig
 from liquid_swarm.models import TaskResult
+from liquid_swarm.providers import get_provider_config
 
 
 async def synthesize_results(
@@ -26,6 +28,8 @@ async def synthesize_results(
     If no successful results exist, returns a fallback message without calling
     the LLM (saves cost).
 
+    Uses the multi-provider system — works with NVIDIA, OpenAI, Anthropic, Ollama.
+
     Args:
         results: All worker TaskResults (mixed success/error).
         config: Swarm configuration for model selection.
@@ -35,10 +39,12 @@ async def synthesize_results(
     """
     cfg = config or SwarmConfig()
 
-    # Filter successful results only
+    # Filter successful results only (skip INSUFFICIENT DATA responses)
     successful = [
         r for r in results
-        if r.status == "success" and r.data.get("result")
+        if r.status == "success"
+        and r.data.get("result")
+        and r.data.get("result") != "INSUFFICIENT DATA"
     ]
 
     # Fallback: no successful results → no LLM call
@@ -51,7 +57,8 @@ async def synthesize_results(
     # Build context from successful analyses
     findings = []
     for i, result in enumerate(successful, 1):
-        findings.append(f"Finding {i}: {result.data['result']}")
+        confidence = result.data.get("confidence", "")
+        findings.append(f"Finding {i} {confidence}: {result.data['result']}")
     context = "\n\n".join(findings)
 
     prompt = (
@@ -67,8 +74,11 @@ async def synthesize_results(
         "Executive Summary:"
     )
 
+    # Use the multi-provider system
+    provider_cfg = get_provider_config()
+
     payload = {
-        "model": cfg.model_id,
+        "model": provider_cfg.default_model or cfg.model_id,
         "messages": [
             {
                 "role": "system",
@@ -81,14 +91,11 @@ async def synthesize_results(
         "stream": False,
     }
 
-    headers = {
-        "Authorization": f"Bearer {NVIDIA_API_KEY}",
-        "Content-Type": "application/json",
-    }
+    headers = provider_cfg.get_headers()
 
     async with httpx.AsyncClient(timeout=30.0) as client:
         response = await client.post(
-            f"{NVIDIA_API_BASE}/chat/completions",
+            f"{provider_cfg.base_url}/chat/completions",
             json=payload,
             headers=headers,
         )

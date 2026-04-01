@@ -87,30 +87,50 @@ class DuckDuckGoSearchEngine:
     def __init__(self, max_concurrent: int = 3):
         self._semaphore = asyncio.Semaphore(max_concurrent)
 
-    async def search(self, query: str, max_results: int = 5) -> list[SearchResult]:
-        """Search DuckDuckGo for web + news results.
+    async def search(
+        self,
+        query: str,
+        max_results: int = 5,
+        max_retries: int = 3,
+    ) -> list[SearchResult]:
+        """Search DuckDuckGo for web + news results with exponential backoff.
 
         Returns up to max_results SearchResults with real URLs.
-        Falls back gracefully to empty list on any error.
+        Retries on transient failures (rate-limit, network hiccups).
+        Falls back gracefully to empty list after all retries exhausted.
         """
-        try:
-            async with self._semaphore:
-                results = await asyncio.to_thread(self._raw_search, query, max_results)
-                
-                # Deep Scrape the top 2 results
-                top_results = results[:2]
-                if top_results:
-                    scrape_tasks = [deep_scrape_url(r.url) for r in top_results]
-                    scraped_texts = await asyncio.gather(*scrape_tasks)
-                    for i, text in enumerate(scraped_texts):
-                        if text:
-                            # Append extra scraped content to the snippet
-                            top_results[i].snippet = f"{top_results[i].snippet}\n\n[EXTRACTED CONTENT]:\n{text}"
-                            
-                return results
-        except Exception as e:
-            logger.warning(f"DuckDuckGo search failed for '{query}': {e}")
-            return []
+        last_error: Exception | None = None
+
+        for attempt in range(max_retries):
+            try:
+                async with self._semaphore:
+                    results = await asyncio.to_thread(self._raw_search, query, max_results)
+
+                    # Deep Scrape the top 2 results for richer context
+                    top_results = results[:2]
+                    if top_results:
+                        scrape_tasks = [deep_scrape_url(r.url) for r in top_results]
+                        scraped_texts = await asyncio.gather(*scrape_tasks, return_exceptions=True)
+                        for i, text in enumerate(scraped_texts):
+                            if isinstance(text, str) and text:
+                                top_results[i].snippet = (
+                                    f"{top_results[i].snippet}\n\n[EXTRACTED CONTENT]:\n{text}"
+                                )
+
+                    return results
+
+            except Exception as exc:
+                last_error = exc
+                if attempt < max_retries - 1:
+                    backoff = 1.0 * (2 ** attempt)  # 1s, 2s, 4s
+                    logger.warning(
+                        f"DuckDuckGo search attempt {attempt + 1}/{max_retries} failed "
+                        f"for '{query}': {exc}. Retrying in {backoff:.1f}s..."
+                    )
+                    await asyncio.sleep(backoff)
+
+        logger.warning(f"DuckDuckGo search exhausted all retries for '{query}': {last_error}")
+        return []
 
     def _raw_search(self, query: str, max_results: int) -> list[SearchResult]:
         """Synchronous DuckDuckGo search (run in thread pool)."""
@@ -165,51 +185,67 @@ class TavilySearchEngine:
         self._api_key = api_key or os.environ.get("TAVILY_API_KEY", "")
         self._semaphore = asyncio.Semaphore(max_concurrent)
 
-    async def search(self, query: str, max_results: int = 5) -> list[SearchResult]:
-        """Search via Tavily API."""
-        try:
-            import httpx
+    async def search(
+        self,
+        query: str,
+        max_results: int = 5,
+        max_retries: int = 3,
+    ) -> list[SearchResult]:
+        """Search via Tavily API with exponential backoff on transient errors."""
+        last_error: Exception | None = None
 
-            async with self._semaphore:
-                async with httpx.AsyncClient(timeout=15.0) as client:
-                    resp = await client.post(
-                        "https://api.tavily.com/search",
-                        json={
-                            "api_key": self._api_key,
-                            "query": query,
-                            "max_results": max_results,
-                            "search_depth": "basic",
-                            "include_answer": False,
-                        },
+        for attempt in range(max_retries):
+            try:
+                async with self._semaphore:
+                    async with httpx.AsyncClient(timeout=15.0) as client:
+                        resp = await client.post(
+                            "https://api.tavily.com/search",
+                            json={
+                                "api_key": self._api_key,
+                                "query": query,
+                                "max_results": max_results,
+                                "search_depth": "basic",
+                                "include_answer": False,
+                            },
+                        )
+                        resp.raise_for_status()
+                        data = resp.json()
+
+                results = []
+                for r in data.get("results", [])[:max_results]:
+                    url = r.get("url", "")
+                    results.append(SearchResult(
+                        title=r.get("title", ""),
+                        url=url,
+                        snippet=r.get("content", ""),
+                        source=_extract_domain(url),
+                    ))
+
+                # Deep Scrape the top 2 results
+                top_results = results[:2]
+                if top_results:
+                    scrape_tasks = [deep_scrape_url(r.url) for r in top_results]
+                    scraped_texts = await asyncio.gather(*scrape_tasks, return_exceptions=True)
+                    for i, text in enumerate(scraped_texts):
+                        if isinstance(text, str) and text:
+                            top_results[i].snippet = (
+                                f"{top_results[i].snippet}\n\n[EXTRACTED CONTENT]:\n{text}"
+                            )
+
+                return results
+
+            except Exception as exc:
+                last_error = exc
+                if attempt < max_retries - 1:
+                    backoff = 1.0 * (2 ** attempt)
+                    logger.warning(
+                        f"Tavily search attempt {attempt + 1}/{max_retries} failed "
+                        f"for '{query}': {exc}. Retrying in {backoff:.1f}s..."
                     )
-                    resp.raise_for_status()
-                    data = resp.json()
+                    await asyncio.sleep(backoff)
 
-            results = []
-            for r in data.get("results", [])[:max_results]:
-                url = r.get("url", "")
-                results.append(SearchResult(
-                    title=r.get("title", ""),
-                    url=url,
-                    snippet=r.get("content", ""),
-                    source=_extract_domain(url),
-                ))
-                
-            # Deep Scrape the top 2 results
-            top_results = results[:2]
-            if top_results:
-                scrape_tasks = [deep_scrape_url(r.url) for r in top_results]
-                scraped_texts = await asyncio.gather(*scrape_tasks)
-                for i, text in enumerate(scraped_texts):
-                    if text:
-                        # Append extra scraped content to the snippet
-                        top_results[i].snippet = f"{top_results[i].snippet}\n\n[EXTRACTED CONTENT]:\n{text}"
-                        
-            return results
-
-        except Exception as e:
-            logger.warning(f"Tavily search failed for '{query}': {e}")
-            return []
+        logger.warning(f"Tavily search exhausted all retries for '{query}': {last_error}")
+        return []
 
 
 # ── Factory ──────────────────────────────────────────────────────────────────
@@ -314,7 +350,7 @@ async def deep_scrape_url(url: str, max_chars: int = 2000) -> str:
                 
             text = soup.get_text(separator=" ", strip=True)
             # Normalize whitespace
-            text = re.sub(r'\\s+', ' ', text).strip()
+            text = re.sub(r'\s+', ' ', text).strip()
             
             # Limit payload size
             if len(text) > max_chars:

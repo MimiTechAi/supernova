@@ -63,6 +63,41 @@ def route_to_workers(state: SwarmState) -> list[Send]:
     ]
 
 
+@traceable(name="thinker_node")
+async def thinker_node(state: SwarmState) -> dict:
+    """O1/Claude 3.7 Reasoning Node. Think critically before execution."""
+    tasks = state.get("tasks", [])
+    if not tasks:
+        return {"strategy_plan": ""}
+
+    task_queries = "\n".join(f"- {t.query}" for t in tasks)
+    global_context = state.get("global_context", "")
+    
+    prompt = (
+        "You are the master Thinker Agent (similar to o1 / Claude 3.7 reasoning core). "
+        "Before we dispatch the following disjoint tasks to parallel workers, "
+        "write a dense, highly analytical execution strategy. "
+        "Consider potential cross-dependencies, missing information vectors, and the global context. "
+        "Wrap your reasoning in <thought_process> tags, then provide the final Strategy Directives."
+        f"\n\nGLOBAL CONTEXT:\n{global_context}"
+        f"\n\nTASKS TO EXECUTE:\n{task_queries}"
+    )
+
+    cfg = SwarmConfig()
+    llm = get_llm(cfg)
+
+    if not llm:
+        return {"strategy_plan": "No valid LLM configured for Thinker."}
+
+    messages = [
+        SystemMessage(content="You are the elite reasoning core of the Liquid Swarm."),
+        HumanMessage(content=prompt)
+    ]
+    
+    response = await llm.ainvoke(messages)
+    return {"strategy_plan": str(response.content)}
+
+
 from typing import TypedDict
 from langgraph.graph import StateGraph, START, END
 
@@ -73,11 +108,16 @@ class WorkerSubState(TypedDict):
     result: dict[str, object] | None
     error: str | None
     global_context: str
+    strategy_plan: str
 
 async def generate_node(state: WorkerSubState) -> dict:
     task = state["task"]
     try:
-        res = await execute_task(task, global_context=state.get("global_context", ""))
+        res = await execute_task(
+            task, 
+            global_context=state.get("global_context", ""),
+            strategy_plan=state.get("strategy_plan", "")
+        )
         return {"result": res.data, "attempts": state["attempts"] + 1, "error": None}
     except Exception as exc:
         return {"error": str(exc), "attempts": state["attempts"] + 1}
@@ -111,6 +151,7 @@ async def worker_node(state: SwarmState) -> dict[str, list[TaskResult]]:
     """Single micro-agent powered by an internal self-correcting mesh graph."""
     task: TaskInput | None = state.get("current_task")
     global_context = state.get("global_context", "")
+    strategy_plan = state.get("strategy_plan", "")
     if task is None:
         return {"results": [TaskResult(task_id="unknown", status="error", data={"error": "No current_task"})]}
 
@@ -118,7 +159,14 @@ async def worker_node(state: SwarmState) -> dict[str, list[TaskResult]]:
         async with _api_semaphore:
             # We run the sub-graph mesh to accomplish self-correction iteratively
             final_sub_state = await compiled_worker_mesh.ainvoke(
-                {"task": task, "attempts": 0, "result": None, "error": None, "global_context": global_context}
+                {
+                    "task": task, 
+                    "attempts": 0, 
+                    "result": None, 
+                    "error": None, 
+                    "global_context": global_context,
+                    "strategy_plan": strategy_plan
+                }
             )
             
         if final_sub_state["error"]:
@@ -185,7 +233,8 @@ from liquid_swarm.tools import web_search_tool
 async def execute_task(
     task: TaskInput,
     config: SwarmConfig | None = None,
-    global_context: str = ""
+    global_context: str = "",
+    strategy_plan: str = ""
 ) -> TaskResult:
     """Execute analytical work using LangChain ChatModels, Tool calling, and Structured Outputs."""
     if isinstance(config, dict):
@@ -194,10 +243,13 @@ async def execute_task(
     provider_config = get_provider_config()
 
     context_str = f"GLOBAL KNOWLEDGE BASE:\n{global_context}\n\n" if global_context else ""
+    strategy_str = f"OVERARCHING STRATEGY DIRECTIVES (Follow these):\n{strategy_plan}\n\n" if strategy_plan else ""
+    
     system_prompt = (
         "You are a precise market analyst. Respond concisely, with structure and "
         "concrete numbers when possible. Maximum 3 sentences. Rate your confidence.\n\n"
         f"{context_str}"
+        f"{strategy_str}"
         "IMPORTANT: If facts are outdated or you lack current data, use the web_search_tool."
     )
 
@@ -224,8 +276,34 @@ async def execute_task(
                 messages.append(ToolMessage(content=tool_res, tool_call_id=tc["id"]))
     
     # 3. Request final structured format
-    messages.append(HumanMessage("Now format our findings into the requested JSON structured output format."))
-    final_output: LLMOutput = await structured_llm.ainvoke(messages)
+    if getattr(response, "tool_calls", None):
+        gathered_context = []
+        for msg in messages:
+            if isinstance(msg, ToolMessage):
+                gathered_context.append(f"Search Result: {msg.content}")
+            elif getattr(msg, "content", None) and not getattr(msg, "tool_calls", None):
+                gathered_context.append(str(msg.content))
+        
+        flat_prompt = (
+            "Here is the context gathered from the web and previous steps:\n"
+            f"{' '.join(gathered_context)}\n\n"
+            f"Original Query: {task.query}\n\n"
+            "Format the findings into the requested JSON structured output format. "
+            "WARNING: You MUST output ONLY a raw JSON object with EXACTLY these keys: "
+            "'result' (string), 'confidence' (integer 0-100), and 'market_share' (float or null). "
+            "Do not include markdown formatting (```json), and do not include any trailing conversational text."
+        )
+        final_messages = [SystemMessage(content=system_prompt), HumanMessage(content=flat_prompt)]
+    else:
+        messages.append(HumanMessage(
+            "Now format our findings into the requested JSON structured output format. "
+            "WARNING: You MUST output ONLY a raw JSON object with EXACTLY these keys: "
+            "'result' (string), 'confidence' (integer 0-100), and 'market_share' (float or null). "
+            "Do not include markdown formatting (```json), and do not include any trailing conversational text."
+        ))
+        final_messages = messages
+        
+    final_output: LLMOutput = await structured_llm.ainvoke(final_messages)
 
     elapsed = time.perf_counter() - t0
     

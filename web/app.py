@@ -30,6 +30,7 @@ from liquid_swarm.models import TaskInput, TaskResult
 from liquid_swarm.providers import LLMProvider, ProviderConfig, get_provider_config
 from liquid_swarm.synthesis import synthesize_results
 from liquid_swarm.persistence import save_run, list_runs, get_run
+from liquid_swarm.ledger import record_run, get_ledger_summary
 from liquid_swarm.web_search import (
     SearchEngine,
     SearchCache,
@@ -38,6 +39,8 @@ from liquid_swarm.web_search import (
     parse_sources,
 )
 from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
+from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
+from contextlib import asynccontextmanager
 from liquid_swarm.graph import build_swarm_graph
 from langchain_core.runnables import RunnableConfig
 
@@ -78,6 +81,18 @@ async def api_key_auth(request: Request, call_next):
 # Serve static files
 static_dir = Path(__file__).parent / "static"
 app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
+
+
+@asynccontextmanager
+async def get_memory_saver():
+    postgres_url = os.environ.get("POSTGRES_URL")
+    if postgres_url:
+        async with AsyncPostgresSaver.from_conn_string(postgres_url) as memory:
+            await memory.setup()
+            yield memory
+    else:
+        async with AsyncSqliteSaver.from_conn_string("supernova_checkpoints.db") as memory:
+            yield memory
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -525,7 +540,15 @@ async def ignite_swarm(request: Request):
         thread_id = f"run-{int(time.time())}"
         config = RunnableConfig(configurable={"thread_id": thread_id})
         
-        state_input = {"tasks": tasks, "current_task": None, "results": []}
+        state_input = {
+            "tasks": tasks,
+            "current_task": None,
+            "results": [],
+            "final_results": [],
+            "flagged_results": [],
+            "global_context": None,
+            "strategy_plan": None,
+        }
         
         completed = 0
         total_cost = 0.0
@@ -533,7 +556,7 @@ async def ignite_swarm(request: Request):
         completed_ids = set()
 
         # Stream directly from the graph
-        async with AsyncSqliteSaver.from_conn_string("supernova_checkpoints.db") as memory:
+        async with get_memory_saver() as memory:
             swarm_graph = build_swarm_graph(checkpointer=memory)
             async for event in swarm_graph.astream(state_input, config=config, stream_mode="updates"):
                 # worker_node returns dict like {"results": [TaskResult(...)]}
@@ -597,10 +620,11 @@ async def approve_run(request: Request):
     config = RunnableConfig(configurable={"thread_id": thread_id})
 
     async def approve_stream():
+        t_approve_start = time.perf_counter()
         yield _sse_event("phase", {"phase": "synthesizing", "message": "Human approved. Proceeding to Reducer & Synthesis..."})
         
         # Resume the graph
-        async with AsyncSqliteSaver.from_conn_string("supernova_checkpoints.db") as memory:
+        async with get_memory_saver() as memory:
             swarm_graph = build_swarm_graph(checkpointer=memory)
             async for event in swarm_graph.astream(None, config=config, stream_mode="updates"):
                 pass # We just run reduce_node and archivar_node to the end
@@ -654,12 +678,34 @@ async def approve_run(request: Request):
             synthesis_text = f"Synthesis unavailable: {e}"
             yield _sse_event("synthesis", {"summary": synthesis_text, "cost_usd": 0.0})
 
-        # Phase 5: Persistence
-        run_id = None
-        # Omitting save_run for brevity, but we tell the UI we're done
+        # Phase 5: Persistence — actually save the run
+        total_time = round(time.perf_counter() - t_approve_start, 3)
         success_count = sum(1 for r in all_results if r.status == "success")
+        run_id = None
+        try:
+            run_id = save_run(
+                query=body.get("query", thread_id),
+                results=all_results,
+                total_cost=total_cost,
+                total_time=total_time,
+                model=provider_cfg.default_model,
+                synthesis=synthesis_text,
+            )
+            # Record in cost ledger
+            record_run(
+                run_id=run_id,
+                query=body.get("query", thread_id),
+                model=provider_cfg.default_model,
+                worker_count=len(all_results),
+                success_count=success_count,
+                cost_usd=total_cost,
+                duration_sec=total_time,
+            )
+        except Exception:
+            pass  # Persistence failure should never crash the response
+
         yield _sse_event("complete", {
-            "total_time": 0, # Placeholder
+            "total_time": total_time,
             "total_cost": round(total_cost, 6),
             "total_tasks": len(all_results),
             "success_count": success_count,
@@ -697,6 +743,117 @@ async def api_get_run(run_id: str):
     if run is None:
         return JSONResponse(status_code=404, content={"detail": "Run not found"})
     return run
+
+
+# ── Cost Ledger API ──────────────────────────────────────────────────────────
+
+@app.get("/api/ledger")
+async def api_ledger():
+    """Return cumulative cost ledger summary with daily/weekly/monthly rollups."""
+    return get_ledger_summary()
+
+
+# ── Export API ───────────────────────────────────────────────────────────────
+
+@app.get("/api/export/{run_id}")
+async def api_export_run(run_id: str, fmt: str = "json"):
+    """Export a completed run as JSON or Markdown.
+
+    Query params:
+        fmt: 'json' (default) or 'md'
+    """
+    from fastapi.responses import PlainTextResponse
+    run = get_run(run_id)
+    if run is None:
+        return JSONResponse(status_code=404, content={"detail": "Run not found"})
+
+    if fmt == "md":
+        results = run.get("results", [])
+        lines = [
+            f"# Supernova Report\n",
+            f"**Query:** {run.get('query', '')}\n",
+            f"**Date:** {run.get('timestamp', '')[:19].replace('T', ' ')} UTC\n",
+            f"**Model:** {run.get('model', '')} | **Workers:** {run.get('worker_count', 0)} | "
+            f"**Cost:** ${run.get('total_cost', 0):.6f} | **Time:** {run.get('total_time', 0):.2f}s\n",
+        ]
+        synthesis = run.get("synthesis")
+        if synthesis:
+            lines += [f"\n## Executive Summary\n\n{synthesis}\n"]
+        lines.append("\n## Worker Results\n")
+        for r in results:
+            data = r.get("data", {})
+            lines.append(f"\n### {r.get('task_id', '?')}\n")
+            lines.append(f"**Status:** {r.get('status', '?')} | "
+                         f"**Confidence:** {data.get('confidence', 'N/A')} | "
+                         f"**Latency:** {data.get('latency_seconds', 0)}s\n\n")
+            lines.append(str(data.get("result", "")) + "\n")
+            sources = data.get("sources", [])
+            if sources:
+                lines.append("\n**Sources:**\n")
+                for s in sources:
+                    used = " (cited)" if s.get("used_by_llm") else ""
+                    lines.append(f"- [{s.get('title', s.get('domain', ''))}]({s.get('url', '')}){used}\n")
+        content = "\n".join(lines)
+        return PlainTextResponse(
+            content=content,
+            media_type="text/markdown",
+            headers={"Content-Disposition": f'attachment; filename="{run_id}.md"'},
+        )
+
+    # Default: JSON
+    from fastapi.responses import Response
+    return Response(
+        content=json.dumps(run, indent=2, ensure_ascii=False),
+        media_type="application/json",
+        headers={"Content-Disposition": f'attachment; filename="{run_id}.json"'},
+    )
+
+
+# ── Health & Metrics ─────────────────────────────────────────────────────────
+
+_start_time = time.time()
+_request_count: int = 0
+_error_count: int = 0
+
+
+@app.get("/health")
+async def health():
+    """Health check endpoint for load balancers and uptime monitors."""
+    return {
+        "status": "ok",
+        "uptime_seconds": round(time.time() - _start_time, 1),
+        "version": "1.0.0",
+    }
+
+
+@app.get("/metrics")
+async def metrics():
+    """Prometheus-compatible plain-text metrics endpoint."""
+    from fastapi.responses import PlainTextResponse
+    uptime = round(time.time() - _start_time, 1)
+    ledger = get_ledger_summary()
+    lines = [
+        "# HELP supernova_uptime_seconds Server uptime in seconds",
+        "# TYPE supernova_uptime_seconds gauge",
+        f"supernova_uptime_seconds {uptime}",
+        "",
+        "# HELP supernova_total_runs Total completed swarm runs",
+        "# TYPE supernova_total_runs counter",
+        f"supernova_total_runs {ledger['total_runs']}",
+        "",
+        "# HELP supernova_total_cost_usd Cumulative cost in USD",
+        "# TYPE supernova_total_cost_usd counter",
+        f"supernova_total_cost_usd {ledger['total_cost_usd']}",
+        "",
+        "# HELP supernova_daily_cost_usd Cost in USD (last 24h)",
+        "# TYPE supernova_daily_cost_usd gauge",
+        f"supernova_daily_cost_usd {ledger['daily_cost_usd']}",
+        "",
+        "# HELP supernova_weekly_cost_usd Cost in USD (last 7 days)",
+        "# TYPE supernova_weekly_cost_usd gauge",
+        f"supernova_weekly_cost_usd {ledger['weekly_cost_usd']}",
+    ]
+    return PlainTextResponse("\n".join(lines) + "\n", media_type="text/plain")
 
 
 if __name__ == "__main__":

@@ -15,7 +15,7 @@ from __future__ import annotations
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.state import CompiledStateGraph
 from langgraph.checkpoint.base import BaseCheckpointSaver
-from liquid_swarm.nodes import reduce_node, route_to_workers, worker_node
+from liquid_swarm.nodes import reduce_node, route_to_workers, worker_node, thinker_node
 from liquid_swarm.memory import bootstrap_node, archivar_node
 from liquid_swarm.state import SwarmState
 
@@ -29,6 +29,7 @@ def build_swarm_graph(checkpointer: BaseCheckpointSaver | None = None) -> Compil
 
     # ── Nodes ────────────────────────────────────────────────────────────
     builder.add_node("bootstrap_node", bootstrap_node)
+    builder.add_node("thinker_node", thinker_node)
     builder.add_node("worker_node", worker_node)
     builder.add_node("reduce_node", reduce_node)
     builder.add_node("archivar_node", archivar_node)
@@ -37,8 +38,11 @@ def build_swarm_graph(checkpointer: BaseCheckpointSaver | None = None) -> Compil
     # START -> Bootstrap
     builder.add_edge(START, "bootstrap_node")
     
-    # Fan-Out: Bootstrap -> N parallel workers
-    builder.add_conditional_edges("bootstrap_node", route_to_workers)
+    # Bootstrap -> Thinker
+    builder.add_edge("bootstrap_node", "thinker_node")
+    
+    # Fan-Out: Thinker -> N parallel workers
+    builder.add_conditional_edges("thinker_node", route_to_workers)
 
     # Fan-In: All workers -> Reduce
     builder.add_edge("worker_node", "reduce_node")
