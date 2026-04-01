@@ -147,6 +147,7 @@ async def _llm_call(
     max_tokens: int = 512,
     temperature: float = 0.2,
     stream: bool = False,
+    timeout: float | None = None,
 ) -> dict:
     """Unified LLM API call that works with any provider.
 
@@ -163,7 +164,9 @@ async def _llm_call(
 
     headers = provider_cfg.get_headers()
 
-    async with httpx.AsyncClient(timeout=90.0) as client:
+    # Scale timeout with output size: 90s base + 1s per 10 tokens requested
+    effective_timeout = timeout if timeout is not None else max(90.0, 90.0 + (max_tokens - 512) / 10)
+    async with httpx.AsyncClient(timeout=effective_timeout) as client:
         resp = await client.post(
             f"{provider_cfg.base_url}/chat/completions",
             json=payload,
@@ -968,6 +971,7 @@ async def ws_swarm(websocket: WebSocket):
                                             "confidence": res.data.get("confidence", ""),
                                             "latency_seconds": res.data.get("latency_seconds", 0),
                                             "model": res.data.get("model", ""),
+                                            "error": res.data.get("error", ""),
                                         },
                                         "cost_usd": res.cost_usd,
                                         "completed": completed,

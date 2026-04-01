@@ -348,10 +348,21 @@ async def execute_task(
         ))
         final_messages = messages
         
-    final_output: LLMOutput = await structured_llm.ainvoke(final_messages)
+    try:
+        final_output: LLMOutput = await structured_llm.ainvoke(final_messages)
+    except Exception:
+        # Structured-output parsing failed (model returned non-JSON).
+        # Fall back to a plain LLM call and wrap the raw text.
+        raw_response = await llm.ainvoke(final_messages)
+        raw_text = str(getattr(raw_response, "content", raw_response)).strip()
+        final_output = LLMOutput(
+            result=raw_text[:1000] if raw_text else "INSUFFICIENT DATA",
+            confidence=40,
+            market_share=None,
+        )
 
     elapsed = time.perf_counter() - t0
-    
+
     return TaskResult(
         task_id=task.task_id,
         status="success",
