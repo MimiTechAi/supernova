@@ -32,4 +32,6 @@ class SwarmState(TypedDict):
     results: Annotated[list[TaskResult], operator.add]
     final_results: list[TaskResult]
     flagged_results: list[TaskResult]
+    global_context: str | None
+
 

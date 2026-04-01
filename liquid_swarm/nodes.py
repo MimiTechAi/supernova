@@ -14,13 +14,19 @@ Critical design decisions:
 
 import asyncio
 import time
-
 import httpx
-from pydantic import ValidationError
 
+from pydantic import ValidationError, BaseModel, Field
 from langgraph.types import Send
+from langsmith import traceable
 
-from liquid_swarm.config import NVIDIA_API_BASE, NVIDIA_API_KEY, SwarmConfig
+from langchain_openai import ChatOpenAI
+from langchain_anthropic import ChatAnthropic
+from langchain_ollama import ChatOllama
+from langchain_core.messages import SystemMessage, HumanMessage
+
+from liquid_swarm.config import SwarmConfig
+from liquid_swarm.providers import get_provider_config, LLMProvider
 from liquid_swarm.models import TaskInput, TaskResult
 from liquid_swarm.state import SwarmState
 
@@ -57,113 +63,180 @@ def route_to_workers(state: SwarmState) -> list[Send]:
     ]
 
 
-# ── Async Worker Node (Drone) ───────────────────────────────────────────────
+from typing import TypedDict
+from langgraph.graph import StateGraph, START, END
+
+class WorkerSubState(TypedDict):
+    """State for the worker's internal dynamic mesh loop."""
+    task: TaskInput
+    attempts: int
+    result: dict[str, object] | None
+    error: str | None
+    global_context: str
+
+async def generate_node(state: WorkerSubState) -> dict:
+    task = state["task"]
+    try:
+        res = await execute_task(task, global_context=state.get("global_context", ""))
+        return {"result": res.data, "attempts": state["attempts"] + 1, "error": None}
+    except Exception as exc:
+        return {"error": str(exc), "attempts": state["attempts"] + 1}
+
+def evaluate_edge(state: WorkerSubState) -> str:
+    """Decide if the worker should self-correct or finish."""
+    if state["error"] or not state["result"]:
+        return "generate" if state["attempts"] < 3 else "end"
+    
+    # Check confidence
+    conf_str = state["result"].get("confidence", "")
+    try:
+        conf = int("".join(c for c in conf_str if c.isdigit()))
+        if conf < 80 and state["attempts"] < 3:
+            # Tell LLM to self-correct by mutating the query
+            state["task"].query += f" (Note: previous attempt only got {conf}% confidence. BE MORE PRECISE.)"
+            return "generate"
+    except ValueError:
+        pass
+    
+    return "end"
+
+# Compile the Worker Subgraph (Dynamic Mesh)
+worker_builder = StateGraph(WorkerSubState)
+worker_builder.add_node("generate", generate_node)
+worker_builder.add_edge(START, "generate")
+worker_builder.add_conditional_edges("generate", evaluate_edge, {"generate": "generate", "end": END})
+compiled_worker_mesh = worker_builder.compile()
 
 async def worker_node(state: SwarmState) -> dict[str, list[TaskResult]]:
-    """Single micro-agent. Async for true parallelism via LangGraph supersteps.
-
-    CRITICAL: TimeoutError is caught HERE, not propagated. If it escapes,
-    LangGraph's _panic_or_proceed cancels all 49 sibling workers.
-    """
+    """Single micro-agent powered by an internal self-correcting mesh graph."""
     task: TaskInput | None = state.get("current_task")
+    global_context = state.get("global_context", "")
     if task is None:
-        return {"results": [TaskResult(
-            task_id="unknown",
-            status="error",
-            data={"error": "No current_task in state"},
-        )]}
+        return {"results": [TaskResult(task_id="unknown", status="error", data={"error": "No current_task"})]}
 
     try:
         async with _api_semaphore:
-            result = await asyncio.wait_for(
-                execute_task(task),
-                timeout=WORKER_TIMEOUT_SECONDS,
+            # We run the sub-graph mesh to accomplish self-correction iteratively
+            final_sub_state = await compiled_worker_mesh.ainvoke(
+                {"task": task, "attempts": 0, "result": None, "error": None, "global_context": global_context}
             )
-        return {"results": [result]}
+            
+        if final_sub_state["error"]:
+            res = TaskResult(
+                task_id=task.task_id, 
+                status="error", 
+                data={"error": final_sub_state["error"]}
+            )
+        else:
+            res = TaskResult(
+                task_id=task.task_id, 
+                status="success", 
+                data=final_sub_state["result"] or {}
+            )
+        return {"results": [res]}
+
     except asyncio.TimeoutError:
-        return {"results": [TaskResult(
-            task_id=task.task_id,
-            status="timeout",
-            data={"error": f"Worker timed out after {WORKER_TIMEOUT_SECONDS}s"},
-        )]}
+        return {"results": [TaskResult(task_id=task.task_id, status="timeout", data={"error": "Timed out"})]}
     except Exception as exc:
-        return {"results": [TaskResult(
-            task_id=task.task_id,
-            status="error",
-            data={"error": str(exc)},
-        )]}
+        return {"results": [TaskResult(task_id=task.task_id, status="error", data={"error": str(exc)})]}
 
 
 # ── Task Execution (Real NVIDIA NIM API — serverless-portable) ──────────────
 
+class LLMOutput(BaseModel):
+    """The structured output strictly expected from the LLM."""
+    result: str = Field(description="The concise analysis text.")
+    confidence: int = Field(description="Confidence percentage between 0 and 100.")
+    market_share: float | None = Field(default=None, description="Extracted market share if applicable.")
+
+def get_llm(cfg: SwarmConfig):
+    provider_config = get_provider_config()
+    model_name = provider_config.default_model or cfg.model_id
+    
+    if provider_config.provider in (LLMProvider.NVIDIA, LLMProvider.OPENAI):
+        return ChatOpenAI(
+            api_key=provider_config.api_key,
+            base_url=provider_config.base_url,
+            model=model_name,
+            temperature=cfg.temperature,
+            max_tokens=cfg.max_tokens,
+        )
+    elif provider_config.provider == LLMProvider.ANTHROPIC:
+        return ChatAnthropic(
+            api_key=provider_config.api_key,
+            base_url=provider_config.base_url,
+            model=model_name,
+            temperature=cfg.temperature,
+            max_tokens=cfg.max_tokens,
+        )
+    elif provider_config.provider == LLMProvider.OLLAMA:
+        return ChatOllama(
+            base_url=provider_config.base_url,
+            model=model_name,
+            temperature=cfg.temperature,
+            format="json",
+        )
+    return None
+
+from langchain_core.messages import ToolMessage
+from liquid_swarm.tools import web_search_tool
+
+@traceable(name="execute_task")
 async def execute_task(
     task: TaskInput,
     config: SwarmConfig | None = None,
+    global_context: str = ""
 ) -> TaskResult:
-    """Execute analytical work by calling NVIDIA NIM API.
-
-    This function has ZERO LangGraph imports, making it directly portable
-    to Modal.com @app.function or any other serverless container runtime.
-
-    Uses the OpenAI-compatible /v1/chat/completions endpoint on NVIDIA NIM.
-
-    Args:
-        task: The analysis task to execute.
-        config: Optional swarm configuration for model selection.
-
-    Returns:
-        A validated TaskResult with the LLM analysis output.
-    """
+    """Execute analytical work using LangChain ChatModels, Tool calling, and Structured Outputs."""
+    if isinstance(config, dict):
+        config = SwarmConfig(**config)
     cfg = config or SwarmConfig()
+    provider_config = get_provider_config()
 
+    context_str = f"GLOBAL KNOWLEDGE BASE:\n{global_context}\n\n" if global_context else ""
     system_prompt = (
         "You are a precise market analyst. Respond concisely, with structure and "
-        "concrete numbers when possible. Maximum 3 sentences."
+        "concrete numbers when possible. Maximum 3 sentences. Rate your confidence.\n\n"
+        f"{context_str}"
+        "IMPORTANT: If facts are outdated or you lack current data, use the web_search_tool."
     )
 
-    payload = {
-        "model": cfg.model_id,
-        "messages": [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": task.query},
-        ],
-        "max_tokens": cfg.max_tokens,
-        "temperature": cfg.temperature,
-        "stream": False,
-    }
-
-    headers = {
-        "Authorization": f"Bearer {NVIDIA_API_KEY}",
-        "Content-Type": "application/json",
-    }
+    llm = get_llm(cfg)
+    llm_with_tools = llm.bind_tools([web_search_tool])
+    structured_llm = llm.with_structured_output(LLMOutput)
 
     t0 = time.perf_counter()
-
-    async with httpx.AsyncClient(timeout=25.0) as client:
-        response = await client.post(
-            f"{NVIDIA_API_BASE}/chat/completions",
-            json=payload,
-            headers=headers,
-        )
-        response.raise_for_status()
+    
+    messages = [
+        SystemMessage(content=system_prompt),
+        HumanMessage(content=task.query)
+    ]
+    
+    # 1. Ask LLM to think/use tools
+    response = await llm_with_tools.ainvoke(messages)
+    messages.append(response)
+    
+    # 2. If tools are requested, execute them
+    if getattr(response, "tool_calls", None):
+        for tc in response.tool_calls:
+            if tc["name"] == "web_search_tool":
+                tool_res = await web_search_tool.ainvoke(tc["args"])
+                messages.append(ToolMessage(content=tool_res, tool_call_id=tc["id"]))
+    
+    # 3. Request final structured format
+    messages.append(HumanMessage("Now format our findings into the requested JSON structured output format."))
+    final_output: LLMOutput = await structured_llm.ainvoke(messages)
 
     elapsed = time.perf_counter() - t0
-    body = response.json()
-
-    # Extract the LLM response
-    llm_output = body["choices"][0]["message"]["content"]
-    usage = body.get("usage", {})
-    prompt_tokens = usage.get("prompt_tokens", 0)
-    completion_tokens = usage.get("completion_tokens", 0)
-
+    
     return TaskResult(
         task_id=task.task_id,
         status="success",
         data={
-            "result": llm_output,
-            "model": cfg.model_id,
-            "prompt_tokens": prompt_tokens,
-            "completion_tokens": completion_tokens,
+            "result": final_output.result,
+            "confidence": f"[CONFIDENCE: {final_output.confidence}%]",
+            "market_share": final_output.market_share,
+            "model": provider_config.default_model or cfg.model_id,
             "latency_seconds": round(elapsed, 3),
         },
         cost_usd=cfg.cost_per_call,

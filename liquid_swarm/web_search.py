@@ -25,6 +25,9 @@ from functools import lru_cache
 from typing import Protocol
 from urllib.parse import urlparse
 
+import httpx
+from bs4 import BeautifulSoup
+
 logger = logging.getLogger(__name__)
 
 
@@ -93,6 +96,17 @@ class DuckDuckGoSearchEngine:
         try:
             async with self._semaphore:
                 results = await asyncio.to_thread(self._raw_search, query, max_results)
+                
+                # Deep Scrape the top 2 results
+                top_results = results[:2]
+                if top_results:
+                    scrape_tasks = [deep_scrape_url(r.url) for r in top_results]
+                    scraped_texts = await asyncio.gather(*scrape_tasks)
+                    for i, text in enumerate(scraped_texts):
+                        if text:
+                            # Append extra scraped content to the snippet
+                            top_results[i].snippet = f"{top_results[i].snippet}\n\n[EXTRACTED CONTENT]:\n{text}"
+                            
                 return results
         except Exception as e:
             logger.warning(f"DuckDuckGo search failed for '{query}': {e}")
@@ -180,6 +194,17 @@ class TavilySearchEngine:
                     snippet=r.get("content", ""),
                     source=_extract_domain(url),
                 ))
+                
+            # Deep Scrape the top 2 results
+            top_results = results[:2]
+            if top_results:
+                scrape_tasks = [deep_scrape_url(r.url) for r in top_results]
+                scraped_texts = await asyncio.gather(*scrape_tasks)
+                for i, text in enumerate(scraped_texts):
+                    if text:
+                        # Append extra scraped content to the snippet
+                        top_results[i].snippet = f"{top_results[i].snippet}\n\n[EXTRACTED CONTENT]:\n{text}"
+                        
             return results
 
         except Exception as e:
@@ -265,3 +290,38 @@ def _extract_domain(url: str) -> str:
         return domain
     except Exception:
         return url
+
+async def deep_scrape_url(url: str, max_chars: int = 2000) -> str:
+    """Asynchronously fetches and extracts readable text from a webpage.
+    Returns empty string on failure or timeout.
+    """
+    try:
+        # 5 second timeout to prevent scraping blocks
+        async with httpx.AsyncClient(timeout=5.0, follow_redirects=True) as client:
+            # Mask user agent to help scrape securely
+            headers = {
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36"
+            }
+            resp = await client.get(url, headers=headers)
+            resp.raise_for_status()
+            
+            # Parsing HTML
+            soup = BeautifulSoup(resp.text, "lxml")
+            
+            # Remove scripts, styles, and empty elements
+            for tag in soup(["script", "style", "nav", "footer", "header", "aside"]):
+                tag.decompose()
+                
+            text = soup.get_text(separator=" ", strip=True)
+            # Normalize whitespace
+            text = re.sub(r'\\s+', ' ', text).strip()
+            
+            # Limit payload size
+            if len(text) > max_chars:
+                text = text[:max_chars] + "..."
+                
+            return text
+            
+    except Exception as e:
+        logger.debug(f"Deep scraping failed for {url}: {e}")
+        return ""

@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import os
 from enum import Enum
+from typing import Any
 
 from pydantic import BaseModel, Field
 
@@ -93,6 +94,10 @@ class SwarmConfig(BaseModel):
     def model_id(self) -> str:
         """The full NVIDIA NIM model identifier."""
         return self.model_tier.value
+
+    def get(self, key: str, default: Any = None) -> Any:
+        """Compatibility for LangSmith @traceable which expects config to be a dict."""
+        return getattr(self, key, default)
 
     def to_langgraph_config(self) -> dict[str, dict[str, int]]:
         """Convert to LangGraph-native config dict for ainvoke().

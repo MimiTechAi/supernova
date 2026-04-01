@@ -40,3 +40,5 @@ uv.lock
 
 # Run history (persistence)
 runs/
+supernova_checkpoints.db*
+supernova_memory.db*

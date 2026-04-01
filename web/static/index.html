@@ -401,49 +401,74 @@
             width: 0%;
         }
 
-        /* ── Worker Grid ───────────────────────────────────── */
-        .workers-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
-            gap: 1rem;
+        /* ── Smart Guidance ─────────────────────────────────── */
+        .guidance-badge {
+            font-size: 0.65rem;
+            padding: 0.15rem 0.4rem;
+            border-radius: 4px;
+            background: rgba(99, 102, 241, 0.15);
+            color: var(--accent-bright);
+            margin-left: 0.5rem;
+            font-weight: 600;
+            transition: all 0.3s ease;
+        }
+
+        /* ── Worker List (Accordion) ───────────────────────── */
+        .workers-list {
+            display: flex;
+            flex-direction: column;
+            gap: 0.5rem;
             margin-bottom: 2rem;
         }
 
-        .worker-card {
+        .worker-row {
             background: var(--bg-card);
             border: 1px solid var(--border);
             border-radius: var(--radius);
-            padding: 1.2rem 1.4rem;
             backdrop-filter: blur(12px);
-            transition: all 0.4s ease;
+            transition: all 0.3s ease;
             opacity: 0;
-            transform: translateY(15px) scale(0.97);
-            animation: card-in 0.5s forwards;
+            transform: translateY(10px);
+            animation: card-in 0.4s forwards;
+            overflow: hidden;
         }
 
-        .worker-card.success { border-color: rgba(52, 211, 153, 0.25); background: rgba(52, 211, 153, 0.03); }
-        .worker-card.error, .worker-card.timeout { border-color: rgba(248, 113, 113, 0.25); background: rgba(248, 113, 113, 0.03); }
+        .worker-row.success { border-color: rgba(52, 211, 153, 0.25); border-left: 3px solid var(--success); }
+        .worker-row.error, .worker-row.timeout { border-color: rgba(248, 113, 113, 0.25); border-left: 3px solid var(--error); }
 
-        @keyframes card-in { to { opacity: 1; transform: translateY(0) scale(1); } }
+        @keyframes card-in { to { opacity: 1; transform: translateY(0); } }
 
-        .worker-card__header {
-            display: flex;
-            justify-content: space-between;
+        .worker-row__header {
+            display: grid;
+            grid-template-columns: 120px 1fr auto;
             align-items: center;
-            margin-bottom: 0.6rem;
+            gap: 1rem;
+            padding: 0.8rem 1.2rem;
+            cursor: pointer;
+            user-select: none;
         }
 
-        .worker-card__id {
+        .worker-row__header:hover { background: rgba(255, 255, 255, 0.02); }
+
+        .worker-row__id {
             font-family: var(--font-mono);
             font-size: 0.75rem;
             font-weight: 600;
             color: var(--accent-bright);
         }
 
-        .worker-card__actions {
+        .worker-row__query {
+            font-size: 0.82rem;
+            color: var(--text-secondary);
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .worker-row__actions {
             display: flex;
             align-items: center;
-            gap: 0.5rem;
+            gap: 0.8rem;
         }
 
         .btn-copy {
@@ -463,7 +488,7 @@
         .btn-copy.visible { display: inline-flex; }
         .btn-copy.copied { color: var(--success); border-color: var(--success); }
 
-        .worker-card__status {
+        .worker-row__status {
             display: inline-flex;
             align-items: center;
             gap: 0.3rem;
@@ -475,49 +500,40 @@
             letter-spacing: 0.5px;
         }
 
-        .worker-card__status.working { background: rgba(251, 191, 36, 0.15); color: var(--warning); }
-        .worker-card__status.success { background: rgba(52, 211, 153, 0.15); color: var(--success); }
-        .worker-card__status.error, .worker-card__status.timeout { background: rgba(248, 113, 113, 0.15); color: var(--error); }
+        .worker-row__status.working { background: rgba(251, 191, 36, 0.15); color: var(--warning); }
+        .worker-row__status.success { background: rgba(52, 211, 153, 0.15); color: var(--success); }
+        .worker-row__status.error, .worker-row__status.timeout { background: rgba(248, 113, 113, 0.15); color: var(--error); }
 
-        .worker-card__status .dot {
+        .worker-row__status .dot {
             width: 5px;
             height: 5px;
             border-radius: 50%;
             background: currentColor;
         }
 
-        .worker-card__status.working .dot { animation: pulse-dot 1s infinite; }
+        .worker-row__status.working .dot { animation: pulse-dot 1s infinite; }
 
-        .worker-card__query {
-            font-size: 0.82rem;
-            color: var(--text-secondary);
-            line-height: 1.4;
-            margin-bottom: 0.6rem;
-            display: -webkit-box;
-            -webkit-line-clamp: 2;
-            line-clamp: 2;
-            -webkit-box-orient: vertical;
-            overflow: hidden;
+        .worker-row__body {
+            display: none;
+            padding: 1rem 1.2rem;
+            border-top: 1px solid var(--border);
+            animation: fade-in 0.3s ease;
         }
 
-        .worker-card__result {
-            display: none;
+        .worker-row.expanded .worker-row__body { display: block; }
+
+        .worker-row__result {
             font-size: 0.85rem;
             color: var(--text-primary);
             line-height: 1.6;
-            padding-top: 0.8rem;
-            border-top: 1px solid var(--border);
-            animation: fade-in 0.4s ease;
         }
 
-        .worker-card__result.visible { display: block; }
-
         /* Markdown inside results */
-        .worker-card__result strong { color: var(--accent-bright); font-weight: 600; }
-        .worker-card__result em { color: var(--text-secondary); font-style: italic; }
-        .worker-card__result ul, .worker-card__result ol { margin: 0.3rem 0; padding-left: 1.2rem; }
-        .worker-card__result li { margin-bottom: 0.15rem; }
-        .worker-card__result h1, .worker-card__result h2, .worker-card__result h3 {
+        .worker-row__result strong { color: var(--accent-bright); font-weight: 600; }
+        .worker-row__result em { color: var(--text-secondary); font-style: italic; }
+        .worker-row__result ul, .worker-row__result ol { margin: 0.3rem 0; padding-left: 1.2rem; }
+        .worker-row__result li { margin-bottom: 0.15rem; }
+        .worker-row__result h1, .worker-row__result h2, .worker-row__result h3 {
             font-size: 0.9rem; font-weight: 700; color: var(--accent-bright); margin: 0.5rem 0 0.2rem;
         }
 
@@ -526,17 +542,17 @@
             to { opacity: 1; transform: translateY(0); }
         }
 
-        .worker-card__meta {
-            display: none;
+        .worker-row__meta {
+            display: flex;
+            flex-wrap: wrap;
             gap: 1rem;
-            margin-top: 0.6rem;
+            margin-top: 0.8rem;
             font-family: var(--font-mono);
             font-size: 0.68rem;
             color: var(--text-muted);
         }
 
-        .worker-card__meta.visible { display: flex; flex-wrap: wrap; }
-        .worker-card__meta span { display: flex; align-items: center; gap: 0.25rem; }
+        .worker-row__meta span { display: flex; align-items: center; gap: 0.25rem; }
 
         /* ── Summary Panel ─────────────────────────────────── */
         .synthesis {
@@ -797,7 +813,8 @@
                     </select>
                 </div>
                 <div class="control-group">
-                    <label>Workers</label>
+                <div class="control-group">
+                    <label>Workers <span id="workerGuidanceBadge" class="guidance-badge">Sniper (Fast)</span></label>
                     <input type="number" id="numTasks" value="8" min="2" max="250" step="1">
                 </div>
                 <div class="control-group">
@@ -844,8 +861,8 @@
             </div>
         </div>
 
-        <!-- Worker Grid -->
-        <div class="workers-grid" id="workersGrid"></div>
+        <!-- Worker List -->
+        <div class="workers-list" id="workersGrid"></div>
 
         <!-- Synthesis Panel -->
         <div class="synthesis" id="synthesisPanel">
@@ -1015,15 +1032,27 @@
                 ctx.lineWidth = 1;
                 ctx.stroke();
 
-                // Data pulse along line (working nodes only)
+                // Data pulse along line (flowing to center)
                 if (node.status === 'working') {
-                    const pulseT = ((timestamp * 0.002 + i * 0.4) % 1);
-                    const px = cx + (node.x - cx) * pulseT;
-                    const py = cy + (node.y - cy) * pulseT;
-                    ctx.beginPath();
-                    ctx.arc(px, py, 1.5, 0, Math.PI * 2);
-                    ctx.fillStyle = 'rgba(129, 140, 248, 0.6)';
-                    ctx.fill();
+                    for (let p = 0; p < 2; p++) {
+                        const pulseT = ((timestamp * 0.0015 + i * 0.4 + p * 0.5) % 1);
+                        const invT = Math.max(0, 1 - pulseT); // 1 = at node, 0 = at center
+                        const px = cx + (node.x - cx) * invT;
+                        const py = cy + (node.y - cy) * invT;
+                        
+                        ctx.beginPath();
+                        ctx.arc(px, py, 2, 0, Math.PI * 2);
+                        ctx.fillStyle = 'rgba(129, 140, 248, 0.9)';
+                        ctx.fill();
+                        
+                        // trail
+                        ctx.beginPath();
+                        ctx.moveTo(px, py);
+                        ctx.lineTo(px + (node.x - cx) * 0.05, py + (node.y - cy) * 0.05);
+                        ctx.strokeStyle = 'rgba(129, 140, 248, 0.4)';
+                        ctx.lineWidth = 1.5;
+                        ctx.stroke();
+                    }
                 }
 
                 // Worker node glow
@@ -1065,6 +1094,49 @@
 
         animFrame = requestAnimationFrame(drawViz);
 
+        // Map vizNodes to accordion rows
+        canvas.addEventListener('mousemove', (e) => {
+            const rect = canvas.getBoundingClientRect();
+            const x = (e.clientX - rect.left) * dpr;
+            const y = (e.clientY - rect.top) * dpr;
+            let hovered = false;
+            for (let node of vizNodes) {
+                const dx = node.x - x;
+                const dy = node.y - y;
+                if (Math.sqrt(dx*dx + dy*dy) <= node.radius + 15) {
+                    hovered = true;
+                    break;
+                }
+            }
+            canvas.style.cursor = hovered ? 'pointer' : 'default';
+        });
+
+        canvas.addEventListener('click', (e) => {
+            const rect = canvas.getBoundingClientRect();
+            const x = (e.clientX - rect.left) * dpr;
+            const y = (e.clientY - rect.top) * dpr;
+            
+            for (let node of vizNodes) {
+                const dx = node.x - x;
+                const dy = node.y - y;
+                if (Math.sqrt(dx*dx + dy*dy) <= node.radius + 15) {
+                    // Find corresponding task id
+                    const taskId = Object.keys(tasks).find(key => tasks[key].index === node.id);
+                    if (taskId) {
+                        const row = document.getElementById(`row-${taskId}`);
+                        if (row) {
+                            row.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                            row.classList.add('expanded');
+                            // Highlight briefly
+                            row.style.boxShadow = '0 0 0 2px var(--accent-glow)';
+                            setTimeout(() => { row.style.boxShadow = ''; }, 1000);
+                        }
+                    }
+                    break;
+                }
+            }
+        });
+
         function vizSetState(state, workerCount) {
             vizState = state;
             const label = document.getElementById('vizLabel');
@@ -1082,10 +1154,12 @@
             }
         }
 
-        function vizMarkWorker(index, status) {
-            if (vizNodes[index]) {
-                vizNodes[index].status = status;
-                vizNodes[index].radius = status === 'success' ? 5 : 4;
+        function vizWorkerComplete(taskId) {
+            const index = tasks[taskId]?.index;
+            if (index !== undefined && vizNodes[index]) {
+                vizNodes[index].status = 'success';
+                vizNodes[index].radius = 6;
+                vizNodes[index].color = '#34d399';
             }
         }
 
@@ -1237,7 +1311,8 @@
                 btn.disabled = false;
                 btn.classList.remove('loading');
                 btn.textContent = '🚀 IGNITE';
-                if (timerInterval) clearInterval(timerInterval);
+                // Stop clearing the timer here because we might just be paused!
+                // clearInterval will happen in handleComplete or clearAll.
             }
         }
 
@@ -1269,6 +1344,9 @@
                     break;
                 case 'complete':
                     handleComplete(data);
+                    break;
+                case 'paused':
+                    handlePaused(data);
                     break;
                 case 'error':
                     document.getElementById('phaseText').textContent = `❌ ${data.message}`;
@@ -1329,48 +1407,117 @@
 
             data.tasks.forEach((task, i) => {
                 tasks[task.id] = { ...task, index: i };
-                const card = document.createElement('div');
-                card.className = 'worker-card';
-                card.id = `card-${task.id}`;
-                card.style.animationDelay = `${i * 50}ms`;
-                card.innerHTML = `
-                    <div class="worker-card__header">
-                        <span class="worker-card__id">${task.id}</span>
-                        <div class="worker-card__actions">
-                            <button class="btn-copy" id="copy-${task.id}" onclick="copyResult('${task.id}')">Copy</button>
-                            <span class="worker-card__status working">
+                const row = document.createElement('div');
+                row.className = 'worker-row';
+                row.id = `row-${task.id}`;
+                row.style.animationDelay = `${i * 10}ms`;
+                
+                // Clicking the header toggles the accordion
+                row.innerHTML = `
+                    <div class="worker-row__header" onclick="this.parentElement.classList.toggle('expanded')">
+                        <span class="worker-row__id">${task.id}</span>
+                        <div class="worker-row__query" title="${escapeHtml(task.query)}">${escapeHtml(task.query)}</div>
+                        <div class="worker-row__actions">
+                            <span class="worker-row__status working">
                                 <span class="dot"></span>Working
                             </span>
                         </div>
                     </div>
-                    <div class="worker-card__query">${escapeHtml(task.query)}</div>
-                    <div class="worker-card__result" id="result-${task.id}"></div>
-                    <div class="worker-card__meta" id="meta-${task.id}"></div>
+                    <div class="worker-row__body">
+                        <div style="display: flex; justify-content: flex-end; margin-bottom: 0.5rem;">
+                            <button class="btn-copy" id="copy-${task.id}" onclick="copyResult('${task.id}')">Copy Result</button>
+                        </div>
+                        <div class="worker-row__result" id="result-${task.id}"></div>
+                        <div class="worker-row__meta" id="meta-${task.id}"></div>
+                    </div>
                 `;
-                grid.appendChild(card);
+                grid.appendChild(row);
             });
 
-            // Auto-scroll to first card
+            // Auto-scroll to first row
             setTimeout(() => {
                 grid.scrollIntoView({ behavior: 'smooth', block: 'start' });
             }, 300);
         }
 
+        function handlePaused(data) {
+            document.getElementById('phaseText').innerHTML = `
+                <span style="color:var(--warning);">⚠️ PAUSED:</span> ${data.message} 
+                <button id="approveBtn" onclick="approveRun('${data.thread_id}')" style="margin-left:15px; padding:6px 14px; border-radius:6px; background:var(--success); color:#05060f; border:none; cursor:pointer; font-weight:700; font-family:var(--font-sans); letter-spacing:0.5px; transition:transform 0.2s;">Approve & Synthesize</button>
+            `;
+            // Keep the spinner visible but change to warning color
+            document.getElementById('spinner').style.borderColor = 'rgba(251, 191, 36, 0.3)';
+            document.getElementById('spinner').style.borderTopColor = 'var(--warning)';
+        }
+
+        async function approveRun(thread_id) {
+            document.getElementById('approveBtn').style.display = 'none';
+            document.getElementById('spinner').style.borderColor = 'var(--border)';
+            document.getElementById('spinner').style.borderTopColor = 'var(--accent)';
+            
+            try {
+                // Determine model
+                const modelSelect = document.getElementById('modelSelect');
+                let modelId = 'gpt-4o-mini';
+                if (modelSelect) {
+                    modelId = modelSelect.value;
+                }
+                
+                const response = await fetch('/api/approve', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        thread_id: thread_id,
+                        model: modelId
+                    }),
+                });
+
+                const reader = response.body.getReader();
+                const decoder = new TextDecoder();
+                let buffer = '';
+
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
+                    buffer += decoder.decode(value, { stream: true });
+
+                    const lines = buffer.split('\n');
+                    buffer = lines.pop();
+
+                    let eventType = '';
+                    for (const line of lines) {
+                        if (line.startsWith('event: ')) {
+                            eventType = line.slice(7).trim();
+                        } else if (line.startsWith('data: ')) {
+                            const data = JSON.parse(line.slice(6));
+                            handleEvent(eventType, data);
+                        }
+                    }
+                }
+            } catch (err) {
+                console.error('Approve error:', err);
+                document.getElementById('phaseText').textContent = `❌ Approve Error: ${err.message}`;
+            }
+        }
+
         function handleWorkerResult(data) {
-            const card = document.getElementById(`card-${data.task_id}`);
-            if (!card) return;
+            const row = document.getElementById(`row-${data.task_id}`);
+            if (!row) return;
 
             allResults.push(data);
 
-            // Update card status
-            card.className = `worker-card ${data.status}`;
-            const statusEl = card.querySelector('.worker-card__status');
+            // Notify Viz
+            vizWorkerComplete(data.task_id);
+
+            // Update row status
+            row.className = `worker-row ${data.status}`;
+            const statusEl = row.querySelector('.worker-row__status');
             const statusLabels = {
                 success: '✓ Done',
                 error: '✗ Error',
                 timeout: '⏱ Timeout',
             };
-            statusEl.className = `worker-card__status ${data.status}`;
+            statusEl.className = `worker-row__status ${data.status}`;
             statusEl.innerHTML = `<span class="dot"></span>${statusLabels[data.status] || data.status}`;
 
             // Show result with markdown rendering
@@ -1409,7 +1556,7 @@
             // Show sources if any exist
             if (data.data.sources && data.data.sources.length > 0) {
                 const sourcesEl = document.createElement('div');
-                sourcesEl.className = 'worker-card__sources';
+                sourcesEl.className = 'worker-row__sources';
                 sourcesEl.style.marginTop = '0.8rem';
                 sourcesEl.style.paddingTop = '0.8rem';
                 sourcesEl.style.borderTop = '1px solid var(--border)';
@@ -1432,7 +1579,7 @@
                 });
                 sourcesHtml += '</ul>';
                 sourcesEl.innerHTML = sourcesHtml;
-                card.appendChild(sourcesEl);
+                row.querySelector('.worker-row__body').appendChild(sourcesEl);
             }
 
             // Update counters
@@ -1441,10 +1588,6 @@
             document.getElementById('runningCost').textContent = `$${totalCost.toFixed(4)}`;
             const pct = (data.completed / data.total) * 100;
             document.getElementById('progressFill').style.width = pct + '%';
-
-            // Update viz
-            const taskMeta = tasks[data.task_id];
-            if (taskMeta) vizMarkWorker(taskMeta.index, data.status);
         }
 
         function handleComplete(data) {
@@ -1556,6 +1699,29 @@
             }
         }
         loadConfig();
+
+        // Smart Guidance slider
+        const numTasksInput = document.getElementById('numTasks');
+        const guidanceBadge = document.getElementById('workerGuidanceBadge');
+        
+        function updateGuidance() {
+            const val = parseInt(numTasksInput.value);
+            if (val <= 10) {
+                guidanceBadge.textContent = 'Sniper (Fast)';
+                guidanceBadge.style.background = 'rgba(52, 211, 153, 0.15)';
+                guidanceBadge.style.color = 'var(--success)';
+            } else if (val <= 50) {
+                guidanceBadge.textContent = 'Researcher (Deep)';
+                guidanceBadge.style.background = 'rgba(99, 102, 241, 0.15)';
+                guidanceBadge.style.color = '#818cf8';
+            } else {
+                guidanceBadge.textContent = 'Futurist (Oracle)';
+                guidanceBadge.style.background = 'rgba(236, 72, 153, 0.15)';
+                guidanceBadge.style.color = '#f472b6';
+            }
+        }
+        numTasksInput.addEventListener('input', updateGuidance);
+        updateGuidance(); // init
 
         // Prompt preset toggle
         document.getElementById('promptPreset').addEventListener('change', (e) => {

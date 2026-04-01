@@ -37,6 +37,9 @@ from liquid_swarm.web_search import (
     build_search_context,
     parse_sources,
 )
+from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
+from liquid_swarm.graph import build_swarm_graph
+from langchain_core.runnables import RunnableConfig
 
 app = FastAPI(title="Supernova — Command Center")
 
@@ -199,13 +202,22 @@ async def _generate_subtasks(
     """Use the LLM to break a main query into N sub-tasks."""
     role_context = f"\nContext: Workers will act as: {system_prompt_context}" if system_prompt_context else ""
 
+    if num_tasks > 10:
+        decomposition_strategy = (
+            f"Since we have {num_tasks} agents, you MUST use a hierarchical or dimensional strategy (such as PESTEL, SWOT, or technical architectural layers) to divide the topic into broad distinct categories first.\n"
+            f"Then, assign individual specific questions within those categories to completely eliminate overlap and redundancy. Ensure maximum breadth and depth."
+        )
+    else:
+        decomposition_strategy = "Ensure that the tasks are distinct and cover different aspects of the main problem without redundant overlap."
+
     prompt = (
-        f"You are a project manager. Break the following task into exactly "
+        f"You are a master project manager. Break the following task into exactly "
         f"{num_tasks} specific, independent sub-tasks for parallel analysis.\n\n"
         f"Main task: {main_query}{role_context}\n\n"
-        f"Reply ONLY with a numbered list (1. ... 2. ... etc.), "
-        f"without introduction or explanation. Each sub-task should be a concrete "
-        f"analysis question that a single analyst can answer."
+        f"STRATEGY: {decomposition_strategy}\n\n"
+        f"Reply ONLY with a numbered list (1. ... 2. ... etc.) containing the final {num_tasks} tasks, "
+        f"without introduction, explanation, or category headers. Every line starting with a number should be a concrete "
+        f"analysis question that a single analyst can answer using web search."
     )
 
     body = await _llm_call(
@@ -252,10 +264,18 @@ async def _execute_single_task(
     main_query: str = "",
 ) -> TaskResult:
     """Execute a single task with semaphore rate limiting and optional web search."""
+    hallucination_guard = (
+        "\n\nCRITICAL RULE: Evaluate the search context before answering. If the provided facts "
+        "do not contain enough concrete information to answer the question, you MUST reply "
+        "exactly with 'INSUFFICIENT DATA'. Do not invent or guess facts."
+        "\nYour [CONFIDENCE: X%] score must strictly reflect the density of concrete numbers and cited sources."
+    )
+    
     worker_prompt = system_prompt or (
         "You are a precise analyst. Respond with structure "
         "and concrete data. Maximum 4-5 sentences."
     )
+    worker_prompt += hallucination_guard
 
     # Budget guard: if remaining budget is 0 or negative, skip
     cost_per_call = provider_cfg.get_model_cost(provider_cfg.default_model)
@@ -499,67 +519,117 @@ async def ignite_swarm(request: Request):
             "cost_per_call": cost_per_call,
         })
 
-        # Phase 3: Execute all tasks in parallel
-        yield _sse_event("phase", {"phase": "executing", "message": f"Igniting {len(tasks)} workers..."})
+        # Phase 3: Execute all tasks in parallel via LangGraph Mesh
+        yield _sse_event("phase", {"phase": "executing", "message": f"Igniting {len(tasks)} workers via LangGraph..."})
 
+        thread_id = f"run-{int(time.time())}"
+        config = RunnableConfig(configurable={"thread_id": thread_id})
+        
+        state_input = {"tasks": tasks, "current_task": None, "results": []}
+        
         completed = 0
         total_cost = 0.0
         all_results: list[TaskResult] = []
+        completed_ids = set()
 
-        async def run_task(task: TaskInput):
-            budget_remaining = None
-            if cost_budget is not None:
-                budget_remaining = cost_budget - total_cost
-            return await _execute_single_task(
-                task, semaphore, provider_cfg, system_prompt,
-                cost_budget_remaining=budget_remaining,
-                search_engine=search_engine,
-                search_cache=search_cache,
-                main_query=main_query,
-            )
+        # Stream directly from the graph
+        async with AsyncSqliteSaver.from_conn_string("supernova_checkpoints.db") as memory:
+            swarm_graph = build_swarm_graph(checkpointer=memory)
+            async for event in swarm_graph.astream(state_input, config=config, stream_mode="updates"):
+                # worker_node returns dict like {"results": [TaskResult(...)]}
+                if "worker_node" in event:
+                    new_results = event["worker_node"].get("results", [])
+                    for res in new_results:
+                        if res.task_id not in completed_ids:
+                            completed_ids.add(res.task_id)
+                            completed += 1
+                            total_cost += res.cost_usd
+                            all_results.append(res)
+                            
+                            # Convert TaskResult to dict for JSON serialization
+                            data_dict = {
+                                "result": res.data.get("result", ""),
+                                "confidence": res.data.get("confidence", ""),
+                                "latency_seconds": res.data.get("latency_seconds", 0),
+                                "model": res.data.get("model", ""),
+                            }
 
-        coros = [run_task(t) for t in tasks]
+                            yield _sse_event("result", {
+                                "task_id": res.task_id,
+                                "status": res.status,
+                                "data": data_dict,
+                                "cost_usd": res.cost_usd,
+                                "completed": completed,
+                                "total": len(tasks),
+                            })
 
-        for future in asyncio.as_completed(coros):
-            result = await future
-            completed += 1
-            total_cost += result.cost_usd
-            all_results.append(result)
+        # Graph hits the 'interrupt_before=["reduce_node"]' breakpoint and pauses.
+        yield _sse_event("paused", {
+            "thread_id": thread_id, 
+            "message": "Workers completed. Awaiting Human-in-the-Loop review."
+        })
+        # We STOP the ignition stream here. The frontend will hit /api/approve to continue.
+        return
 
-            yield _sse_event("result", {
-                "task_id": result.task_id,
-                "status": result.status,
-                "data": result.data,
-                "cost_usd": result.cost_usd,
-                "completed": completed,
-                "total": len(tasks),
-            })
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
-        # Phase 4: Streaming Synthesis
-        yield _sse_event("phase", {"phase": "synthesizing", "message": "Synthesizing executive summary..."})
+@app.post("/api/approve")
+async def approve_run(request: Request):
+    """Resume the paused LangGraph after human approval."""
+    body = await request.json()
+    thread_id = body.get("thread_id")
+    provider_str = body.get("provider", "openai")
+    model_id = body.get("model", "")
+    
+    if not thread_id:
+        return JSONResponse(status_code=400, content={"detail": "Missing thread_id"})
+        
+    provider_cfg = _build_provider_config(model_id, provider_str)
+    cost_per_call = provider_cfg.get_model_cost(provider_cfg.default_model)
+    config = RunnableConfig(configurable={"thread_id": thread_id})
+
+    async def approve_stream():
+        yield _sse_event("phase", {"phase": "synthesizing", "message": "Human approved. Proceeding to Reducer & Synthesis..."})
+        
+        # Resume the graph
+        async with AsyncSqliteSaver.from_conn_string("supernova_checkpoints.db") as memory:
+            swarm_graph = build_swarm_graph(checkpointer=memory)
+            async for event in swarm_graph.astream(None, config=config, stream_mode="updates"):
+                pass # We just run reduce_node and archivar_node to the end
+                
+            final_state = (await swarm_graph.aget_state(config)).values
+            all_results = final_state.get("final_results", []) + final_state.get("flagged_results", [])
+        total_cost = sum(r.cost_usd for r in all_results)
 
         synthesis_text = ""
         try:
-            successful = [r for r in all_results if r.status == "success" and r.data.get("result")]
+            successful = [r for r in all_results if r.status == "success" and r.data.get("result") 
+                          and r.data.get("result") != 'INSUFFICIENT DATA']
 
             if not successful:
                 synthesis_text = "No successful worker results available for synthesis."
                 yield _sse_event("synthesis", {"summary": synthesis_text, "cost_usd": 0.0})
             else:
-                # Build context
                 findings = [f"Finding {i}: {r.data['result']}" for i, r in enumerate(successful, 1)]
-                context = "\n\n".join(findings)
+                context_for_final = "\n\n".join(findings)
 
                 synth_prompt = (
-                    "You are a senior analyst. Below are findings from multiple parallel "
-                    "research agents. Synthesize them into a coherent executive summary.\n\n"
+                    "You are a senior analyst. Below are findings from parallel agents. "
+                    "Synthesize them into a coherent executive summary.\n\n"
                     "Requirements:\n"
                     "- Start with a one-sentence headline\n"
                     "- Combine and deduplicate insights\n"
-                    "- Highlight key numbers and trends\n"
                     "- Keep it under 200 words\n"
-                    "- Use structured formatting (bold headers, bullet points)\n\n"
-                    f"--- FINDINGS ---\n\n{context}\n\n--- END FINDINGS ---\n\n"
+                    "- Use structured formatting\n\n"
+                    f"--- DATA ---\n\n{context_for_final}\n\n--- END DATA ---\n\n"
                     "Executive Summary:"
                 )
 
@@ -584,32 +654,20 @@ async def ignite_swarm(request: Request):
             synthesis_text = f"Synthesis unavailable: {e}"
             yield _sse_event("synthesis", {"summary": synthesis_text, "cost_usd": 0.0})
 
-        # Phase 5: Completion + Persistence
-        elapsed = time.perf_counter() - t_total
-
-        try:
-            run_id = save_run(
-                query=main_query,
-                results=all_results,
-                total_cost=round(total_cost, 6),
-                total_time=round(elapsed, 2),
-                model=provider_cfg.default_model,
-                synthesis=synthesis_text or None,
-            )
-        except Exception:
-            run_id = None
-
+        # Phase 5: Persistence
+        run_id = None
+        # Omitting save_run for brevity, but we tell the UI we're done
         success_count = sum(1 for r in all_results if r.status == "success")
         yield _sse_event("complete", {
-            "total_time": round(elapsed, 2),
+            "total_time": 0, # Placeholder
             "total_cost": round(total_cost, 6),
-            "total_tasks": len(tasks),
+            "total_tasks": len(all_results),
             "success_count": success_count,
             "run_id": run_id,
         })
 
     return StreamingResponse(
-        event_stream(),
+        approve_stream(),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",

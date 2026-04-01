@@ -11,7 +11,7 @@
 
 <br />
 
-![Supernova Architecture in Action](assets/intro-demo.webp)
+<img src="assets/intro-demo.webp" width="100%" alt="Supernova Architecture in Action" />
 
 <br />
 
@@ -119,7 +119,9 @@ Start the ASGI web server backend:
 uv run python -m web.app
 ```
 
-![Supernova Executive Summary](assets/summary-demo.png)
+<div align="center">
+  <img src="assets/summary-demo.png" width="80%" alt="Supernova Executive Summary" />
+</div>
 
 Navigate your browser to **http://localhost:8000** to command the swarm.
 
